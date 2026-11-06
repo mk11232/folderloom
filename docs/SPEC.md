@@ -1,6 +1,6 @@
 # Folderloom: deliberate folder consolidation
 
-Status: Accepted product specification, published as [GitHub issue #1](https://github.com/mk11232/folderloom/issues/1) with the ready-for-agent label. The user confirmed testing through the shared Rust job interface, with real temporary folders, SQLite, and process restarts. The first milestone now has a reusable core and development CLI implementation; see [README.md](../README.md) for commands, verification, and limits. Later milestones remain unimplemented.
+Status: Accepted product specification, published as [GitHub issue #1](https://github.com/mk11232/folderloom/issues/1) with the ready-for-agent label. The user confirmed testing through the shared Rust job interface, with real temporary folders, SQLite, and process restarts. Read-only inventory and the staged comparison foundation ([#4](https://github.com/mk11232/folderloom/issues/4)) now have a reusable core and development CLI implementation; see [README.md](../README.md) for commands, verification, and limits. Folder mapping and saved merge plans ([#5](https://github.com/mk11232/folderloom/issues/5)) and later milestones remain unimplemented.
 
 ## Problem Statement
 
