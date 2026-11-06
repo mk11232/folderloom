@@ -42,23 +42,7 @@ struct Source {
 impl Desktop {
     pub fn open(data: PathBuf) -> Result<Self> {
         fs::create_dir_all(data.join("jobs")).map_err(err)?;
-        let mut snapshot = empty_snapshot();
-        match fs::read_to_string(data.join("current-job")) {
-            Ok(id) => match valid_id(id.trim()).and_then(|id| {
-                let job =
-                    Job::open(&data.join("jobs").join(format!("{id}.sqlite"))).map_err(err)?;
-                job_snapshot(&job, id)
-            }) {
-                Ok(saved) => snapshot = saved,
-                Err(message) => {
-                    snapshot["error"] = json!(format!("Saved job could not be reopened: {message}"))
-                }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                snapshot["error"] = json!(format!("Saved job pointer could not be read: {e}"))
-            }
-        }
+        let snapshot = read_saved(&data);
         Ok(Self {
             inner: Arc::new(Inner {
                 data,
@@ -86,8 +70,16 @@ impl Desktop {
             ),
         };
         Ok(
-            json!({"manifest":manifest,"manifest_path":display_path(&path),"configuration_error":configuration_error,"snapshot":self.snapshot()?}),
+            json!({"manifest":manifest,"manifest_path":display_path(&path),"configuration_error":configuration_error,"snapshot":self.reopen()?}),
         )
+    }
+    /// Reopen durable state only while idle. The same gate reserves worker starts.
+    pub fn reopen(&self) -> Result<Value> {
+        let mut cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached["worker"].is_null() {
+            *cached = read_saved(&self.inner.data);
+        }
+        Ok(cached.clone())
     }
     pub fn snapshot(&self) -> Result<Value> {
         self.inner.snapshot.lock().map(|s| s.clone()).map_err(err)
@@ -215,6 +207,23 @@ impl Desktop {
         Ok(())
     }
 }
+fn read_saved(data: &Path) -> Value {
+    let mut snapshot = empty_snapshot();
+    match fs::read_to_string(data.join("current-job")) {
+        Ok(id) => match valid_id(id.trim()).and_then(|id| {
+            let job = Job::open(&data.join("jobs").join(format!("{id}.sqlite"))).map_err(err)?;
+            job_snapshot(&job, id)
+        }) {
+            Ok(saved) => snapshot = saved,
+            Err(message) => {
+                snapshot["error"] = json!(format!("Saved job could not be reopened: {message}"))
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => snapshot["error"] = json!(format!("Saved job pointer could not be read: {e}")),
+    }
+    snapshot
+}
 fn valid_id(id: &str) -> Result<&str> {
     if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
         Err("Invalid saved job identifier.".into())
@@ -278,7 +287,7 @@ fn job_snapshot(job: &Job, id: &str) -> Result<Value> {
     let c = job.comparison_progress().map_err(err)?;
     Ok(json!({
         "job_id":id,"worker":null,"pause_requested":false,"error":null,
-        "roots":job.roots().map_err(err)?.into_iter().map(|r|json!({"id":r.id,"path":display_path(&r.path)})).collect::<Vec<_>>(),
+        "roots":job.roots().map_err(err)?.into_iter().map(|r|json!({"id":r.id,"path":display_path(&r.path),"input_path":r.path.to_str()})).collect::<Vec<_>>(),
         "inventory_progress":{"state":state(p.state),"generation":p.generation,"entries":p.entries,"stale_entries":p.stale_entries,"pending_directories":p.pending_directories,"failed_directories":p.failed_directories,"failures":p.failures},
         "comparison_progress":{"state":state(c.state),"generation":c.generation,"files":c.files,"pending_files":c.pending_files,"full_hashes":c.full_hashes,"unique_sizes":c.unique_sizes,"unique_samples":c.unique_samples,"failures":c.failures,"root_failures":c.root_failures,"bytes_read":c.bytes_read},
         "entries":job.inventory().map_err(err)?.into_iter().map(|e|json!({"key":key(e.root_id,&e.relative_path),"root_id":e.root_id,"relative_path":display_path(&e.relative_path),"entry_type":state(e.entry_type),"size":e.size,"modified_ns":e.modified_ns,"link_target":e.link_target.as_deref().map(display_path),"excluded":e.excluded,"stale":e.stale,"directory_complete":e.directory_complete})).collect::<Vec<_>>(),
@@ -294,22 +303,28 @@ mod shell {
     use tauri::Manager;
     #[tauri::command]
     async fn desktop_bootstrap(app: tauri::State<'_, Desktop>) -> Result<Value> {
-        app.bootstrap()
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.bootstrap())
+            .await
+            .map_err(err)?
     }
     #[tauri::command]
-    fn desktop_snapshot(app: tauri::State<'_, Desktop>) -> Result<Value> {
+    async fn desktop_snapshot(app: tauri::State<'_, Desktop>) -> Result<Value> {
         app.snapshot()
     }
     #[tauri::command]
-    fn desktop_start(app: tauri::State<'_, Desktop>, root_paths: Vec<String>) -> Result<Value> {
+    async fn desktop_start(
+        app: tauri::State<'_, Desktop>,
+        root_paths: Vec<String>,
+    ) -> Result<Value> {
         app.start(root_paths)
     }
     #[tauri::command]
-    fn desktop_run(app: tauri::State<'_, Desktop>, mode: String) -> Result<Value> {
+    async fn desktop_run(app: tauri::State<'_, Desktop>, mode: String) -> Result<Value> {
         app.run_job(&mode)
     }
     #[tauri::command]
-    fn desktop_pause(app: tauri::State<'_, Desktop>) -> Result<Value> {
+    async fn desktop_pause(app: tauri::State<'_, Desktop>) -> Result<Value> {
         app.pause()
     }
     pub fn run() {

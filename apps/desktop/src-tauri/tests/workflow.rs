@@ -19,7 +19,7 @@ fn idle(app: &Desktop) -> serde_json::Value {
 #[test]
 fn saved_inventory_and_full_content_evidence_reopen_through_desktop() {
     let fixture = tempfile::tempdir().unwrap();
-    let source = fixture.path().join("source");
+    let source = fixture.path().join(r"source\name");
     fs::create_dir(&source).unwrap();
     fs::write(source.join("one.txt"), b"same contents").unwrap();
     fs::write(source.join("two.txt"), b"same contents").unwrap();
@@ -30,6 +30,14 @@ fn saved_inventory_and_full_content_evidence_reopen_through_desktop() {
         .unwrap();
     let scanned = idle(&app);
     assert_eq!(scanned["inventory_progress"]["state"], "complete");
+    assert_eq!(
+        scanned["roots"][0]["input_path"],
+        fs::canonicalize(&source).unwrap().to_str().unwrap()
+    );
+    assert_ne!(
+        scanned["roots"][0]["path"],
+        scanned["roots"][0]["input_path"]
+    );
     assert_eq!(scanned["entries"].as_array().unwrap().len(), 4);
     app.run_job("compare").unwrap();
     let compared = idle(&app);
@@ -181,4 +189,25 @@ fn saved_job_reopens_in_a_fresh_process() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn reopen_in_the_same_window_reloads_saved_changes_without_starting_work() {
+    let fixture = tempfile::tempdir().unwrap();
+    let source = fixture.path().join("source");
+    fs::create_dir(&source).unwrap();
+    let data = fixture.path().join("app");
+    let app = Desktop::open(data.clone()).unwrap();
+    app.start(vec![source.to_str().unwrap().into()]).unwrap();
+    let original = idle(&app);
+    let database = data
+        .join("jobs")
+        .join(format!("{}.sqlite", original["job_id"].as_str().unwrap()));
+    let mut external = folderloom_core::Job::resume(&database).unwrap();
+    external.pause().unwrap();
+    drop(external);
+    let reopened = app.bootstrap().unwrap()["snapshot"].clone();
+    assert_eq!(reopened["inventory_progress"]["generation"], 2);
+    assert_eq!(reopened["inventory_progress"]["state"], "paused");
+    assert!(reopened["worker"].is_null());
 }

@@ -10,6 +10,8 @@ The Tauri host uses the same public Rust `Job` interface as the development CLI.
 - Cooperative pause at a bounded checkpoint, rejecting overlapping worker requests, reopening a paused job, and explicit resume.
 - Unavailable source roots producing comparison root gaps and stale inventory on rescan.
 - A fresh process reopening saved inventory and comparison evidence.
+- Reopen in the same window reloading durable changes made through the public Job interface while idle.
+- Raw valid-UTF-8 source paths kept separate from escaped display paths when selecting saved roots again.
 - Distinct invalid-UTF-8 placement keys and escaped display paths on Linux. macOS APFS rejects the synthetic invalid filename, so that filesystem-specific fixture is Linux-only.
 
 The lightweight adapter command is `cargo test -p folderloom-desktop --no-default-features --test workflow`. Native checks use the default `desktop` feature; packaged builds enable `custom-protocol` to embed frontend assets. Frontend validation is `npm ci && npm run build` from `apps/desktop`. CI installs Linux WebKit/GTK dependencies and runs frontend build, formatting, workspace Clippy, and all workspace tests on Linux and macOS.
