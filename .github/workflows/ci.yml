@@ -27,6 +27,8 @@ jobs:
         working-directory: apps/desktop
       - run: npm run build
         working-directory: apps/desktop
+      - run: npm test
+        working-directory: apps/desktop
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AlertCircle, ArrowRight, Check, ChevronRight, File, Folder, FolderPlus, Layers, Link, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
 import { api } from "./api";
+import folderloomIcon from "./assets/folderloom.png";
 import type { Bootstrap, Comparison, Entry, Snapshot, Source } from "./api";
+import { ancestors, buildInventoryTree, entryName, inventoryRows, latestComparisons, matchingContext } from "./inventory-tree";
+import type { InventoryNode } from "./inventory-tree";
 
 const stageLabels: Record<string, string> = {
   pending_sample: "Awaiting sample", sampling: "Reading sample", sampled: "Sample candidate",
@@ -38,7 +41,10 @@ export default function App() {
   const [rootFilter, setRootFilter] = useState<number | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showGaps, setShowGaps] = useState(false);
-  const [page, setPage] = useState(0);
+  const [expansion, setExpansion] = useState<Map<string, boolean>>(() => new Map());
+  const [filteredCollapsed, setFilteredCollapsed] = useState<Set<string>>(() => new Set());
+  const [revealKey, setRevealKey] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const requestVersion = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -104,11 +110,7 @@ export default function App() {
   const resumeComparison = comparison && ["paused", "running"].includes(comparison.state);
   const roots = snapshot?.roots ?? [];
   const rootName = (id: number) => { const root = roots.find(root => root.id === id); return sources.find(source => root?.input_path ? sourceInput(source) === root.input_path : source.path === root?.path)?.label ?? `Copy ${roots.findIndex(root => root.id === id) + 1}`; };
-  const records = useMemo(() => {
-    const result = new Map<string, Comparison>();
-    for (const item of snapshot?.comparisons ?? []) { const previous = result.get(item.key); if (!previous || item.generation > previous.generation) result.set(item.key, item); }
-    return result;
-  }, [snapshot?.comparisons]);
+  const records = useMemo(() => latestComparisons(snapshot?.comparisons ?? []), [snapshot?.comparisons]);
   const matchGroups = useMemo(() => {
     const result = new Map<string, Comparison[]>();
     for (const item of records.values()) if (!item.stale && item.stage === "full_hash" && item.full_hash) {
@@ -127,10 +129,33 @@ export default function App() {
     if (filter === "attention") return entry.stale || record?.stale || record?.stage === "failed" || (entry.entry_type === "directory" && !entry.directory_complete);
     return true;
   }), [snapshot?.entries, records, matchGroups, rootFilter, query, filter, sources, roots]);
-  useEffect(() => { setPage(0); }, [query, filter, rootFilter]);
-  const pageCount = Math.max(1, Math.ceil(visible.length / 150));
-  const currentPage = Math.min(page, pageCount - 1);
-  const rows = visible.slice(currentPage * 150, (currentPage + 1) * 150);
+  const tree = useMemo(() => buildInventoryTree(snapshot?.roots ?? [], snapshot?.entries ?? []), [snapshot?.roots, snapshot?.entries]);
+  const filtering = Boolean(query || filter !== "all");
+  const included = useMemo(() => filtering ? matchingContext(tree, new Set(visible.map(entry => entry.key))) : undefined, [tree, visible, filtering]);
+  const isExpanded = (node: InventoryNode) => filtering ? !filteredCollapsed.has(node.id) : expansion.get(node.id) ?? node.source;
+  const rows = inventoryRows(tree, isExpanded, included, rootFilter);
+  useEffect(() => { setExpansion(new Map()); setFilteredCollapsed(new Set()); }, [snapshot?.job_id]);
+  useEffect(() => { setFilteredCollapsed(new Set()); }, [query, filter, rootFilter]);
+  useEffect(() => {
+    if (!revealKey) return;
+    rowRefs.current.get(revealKey)?.scrollIntoView({ block: "nearest" });
+    setRevealKey(null);
+  }, [revealKey]);
+  function toggleFolder(node: InventoryNode) {
+    if (filtering) setFilteredCollapsed(previous => { const next = new Set(previous); if (next.has(node.id)) next.delete(node.id); else next.add(node.id); return next; });
+    else setExpansion(previous => new Map(previous).set(node.id, !(previous.get(node.id) ?? node.source)));
+  }
+  function expandAll(expanded: boolean) {
+    if (filtering) setFilteredCollapsed(new Set(expanded ? [] : tree.folders.map(node => node.id)));
+    else setExpansion(new Map(tree.folders.map(node => [node.id, expanded])));
+  }
+  function revealPlacement(key: string) {
+    const node = tree.byEntry.get(key);
+    if (!node) return;
+    setQuery(""); setFilter("all"); setRootFilter(null);
+    setExpansion(previous => { const next = new Map(previous); for (const parent of ancestors(node)) next.set(parent.id, true); return next; });
+    setSelectedKey(key); setRevealKey(key);
+  }
   const selected = snapshot?.entries.find(entry => entry.key === selectedKey);
   const selectedComparison = selected ? records.get(selected.key) : undefined;
   const placements = matching(selectedComparison).filter(record => record.key !== selectedKey);
@@ -142,7 +167,7 @@ export default function App() {
 
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Sources and saved job">
-      <div className="brand"><span className="brand-mark"><Layers size={21} /></span><strong>Folderloom</strong><span className="demo-label">DEMO</span></div>
+      <div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong><span className="demo-label">DEMO</span></div>
       <div className="sidebar-heading">SOURCE FOLDERS <span>{sources.length}</span></div>
       <div className="sources">
         {sources.map(source => { const inputPath = sourceInput(source); return <label className={`source ${chosen.includes(inputPath ?? "") ? "chosen" : ""}`} key={source.path}>
@@ -179,16 +204,26 @@ export default function App() {
       </section>
       {(active || comparison?.bytes_read) ? <div className="work-progress"><span>{snapshot?.worker === "scan" ? `${count(inventory?.pending_directories ?? 0)} folders awaiting enumeration` : `${count(comparison?.pending_files ?? 0)} files awaiting comparison`}</span><span>{size(comparison?.bytes_read ?? 0)} content read{inventory?.failed_directories ? ` · ${inventory.failed_directories} incomplete folders` : ""}</span></div> : null}
       {showGaps && <section className="gap-panel" aria-label="Recorded failures"><div className="gap-heading"><strong>Recorded gaps and failures</strong><button onClick={() => setShowGaps(false)} aria-label="Close failures"><X size={14} /></button></div><p>Restore access and re-scan to create fresh observations. Earlier-generation failures remain as history.</p>{!failures.length && !rootFailures.length && !comparisonFailures.length && <p>Stale entries are shown in the Needs attention filter below.</p>}{rootFailures.map((failure, index) => <div className="failure-row" key={`root-${index}`}><strong>{rootName(failure.root_id)} · root comparison gap</strong><span>{failure.message}</span><small>Generation {failure.generation}{failure.stale ? " · stale" : ""}</small></div>)}{comparisonFailures.map(failure => <div className="failure-row" key={`comparison-${failure.key}-${failure.generation}`}><strong>{rootName(failure.root_id)} / {failure.relative_path} · content read</strong><span>{failure.failure}</span><small>Generation {failure.generation}{failure.stale ? " · historical / stale" : ""}</small></div>)}{failures.map((failure, index) => <div className="failure-row" key={`file-${index}`}><strong>{rootName(failure.root_id)} / {failure.relative_path || "(source root)"}</strong><span>{failure.message}</span><small>Generation {failure.generation}{failure.generation !== inventory?.generation ? " · historical" : ""}</small></div>)}</section>}
-      <div className="inventory-toolbar"><div className="inventory-title"><h2>Inventory</h2><span>{count(visible.length)} placements</span></div><label className="search"><Search size={15} /><input ref={searchRef} type="search" placeholder="Search paths…" aria-label="Search inventory paths" value={query} onChange={e => setQuery(e.target.value)} /><kbd>⌘ F</kbd></label><select aria-label="Filter inventory" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All entries</option><option value="files">Files only</option><option value="matches">Full-hash matches</option><option value="unique">Unique candidates</option><option value="attention">Needs attention</option></select><select aria-label="Filter source folder" value={rootFilter ?? "all"} onChange={e => setRootFilter(e.target.value === "all" ? null : Number(e.target.value))}><option value="all">All sources</option>{roots.map(root => <option key={root.id} value={root.id}>{rootName(root.id)}</option>)}</select></div>
+      <div className="inventory-toolbar"><div className="inventory-title"><h2>Folder inventory</h2><span>{count(visible.length)} {filtering ? "matching placements" : "placements"}</span></div><label className="search"><Search size={15} /><input ref={searchRef} type="search" placeholder="Search paths…" aria-label="Search inventory paths" value={query} onChange={e => setQuery(e.target.value)} /><kbd>⌘ F</kbd></label><select aria-label="Filter inventory" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All entries</option><option value="files">Files only</option><option value="matches">Full-hash matches</option><option value="unique">Unique candidates</option><option value="attention">Needs attention</option></select><select aria-label="Filter source folder" value={rootFilter ?? "all"} onChange={e => setRootFilter(e.target.value === "all" ? null : Number(e.target.value))}><option value="all">All sources</option>{roots.map(root => <option key={root.id} value={root.id}>{rootName(root.id)}</option>)}</select></div>
       <div className={`inventory-workbench ${selected ? "with-details" : ""}`}>
-        <div className="table-region"><div className="table-scroll"><table><thead><tr><th>File placement</th><th>Source</th><th className="numeric">Size</th><th>Evidence / stage</th></tr></thead><tbody>{rows.map(entry => { const record = records.get(entry.key); const fullMatch = matching(record).length > 1 && !entry.stale; return <tr key={entry.key} className={selectedKey === entry.key ? "selected" : ""} onClick={() => setSelectedKey(entry.key)}><td><button className="file-select" aria-pressed={selectedKey === entry.key} onClick={() => setSelectedKey(entry.key)} title={entry.relative_path || "Source root"}><EntryIcon entry={entry} /><span>{entry.relative_path || "(source root)"}</span></button></td><td className="source-cell">{rootName(entry.root_id)}</td><td className="numeric">{entry.entry_type === "file" ? size(entry.size) : "—"}</td><td><span className={`stage ${entry.stale || record?.stale || record?.stage === "failed" ? "warning" : fullMatch ? "matched" : ""}`}>{fullMatch ? <><Check size={11} /> Full-hash match</> : stage(entry, record)}</span></td></tr>; })}</tbody></table>
+        <div className="table-region"><div className="tree-toolbar"><span>{filtering ? "Matching entries with their parent folders" : "Open a folder to explore its saved contents"}</span><div><button onClick={() => expandAll(true)} disabled={!rows.length}>Expand all</button><button onClick={() => expandAll(false)} disabled={!rows.length}>Collapse all</button></div></div><div className="table-scroll"><table aria-label="Folder inventory"><thead><tr><th>Folder / file</th><th>Source</th><th className="numeric">Size</th><th>Evidence / stage</th></tr></thead><tbody>{rows.map(({ node, depth }) => {
+          const entry = node.entry;
+          const record = entry ? records.get(entry.key) : undefined;
+          const fullMatch = matching(record).length > 1 && !entry?.stale;
+          const folder = node.source || entry?.entry_type === "directory";
+          const name = node.source ? rootName(node.rootId) : entryName(entry!);
+          const selectedRow = Boolean(entry && selectedKey === entry.key);
+          return <tr key={node.id} ref={element => { if (entry) { if (element) rowRefs.current.set(entry.key, element); else rowRefs.current.delete(entry.key); } }} className={`${selectedRow ? "selected" : ""} ${node.source ? "source-root" : ""} ${filtering && entry && !visible.includes(entry) ? "ancestor-context" : ""}`} onClick={() => { if (entry) setSelectedKey(entry.key); }}>
+            <td><div className="tree-name" style={{ paddingLeft: depth * 18 }}>{folder ? <button className="folder-toggle" aria-label={`${isExpanded(node) ? "Collapse" : "Expand"} ${name}`} aria-expanded={isExpanded(node)} onClick={event => { event.stopPropagation(); toggleFolder(node); }} onKeyDown={event => { if (event.key === "ArrowRight" || event.key === "ArrowLeft") { event.preventDefault(); if (isExpanded(node) !== (event.key === "ArrowRight")) toggleFolder(node); } }}><ChevronRight size={13} className={isExpanded(node) ? "expanded" : ""} /></button> : <span className="tree-spacer" />}<button className="file-select" aria-pressed={selectedRow} disabled={!entry} onClick={() => { if (entry) setSelectedKey(entry.key); }} title={entry?.relative_path || roots.find(root => root.id === node.rootId)?.path}>{entry ? <EntryIcon entry={entry} /> : <Folder size={15} />}<span>{name}</span></button></div></td><td className="source-cell">{rootName(node.rootId)}</td><td className="numeric">{entry?.entry_type === "file" ? size(entry.size) : "—"}</td><td><span className={`stage ${entry?.stale || record?.stale || record?.stage === "failed" ? "warning" : fullMatch ? "matched" : ""}`}>{entry ? fullMatch ? <><Check size={11} /> Full-hash match</> : stage(entry, record) : "No saved root observation"}</span></td>
+          </tr>;
+        })}</tbody></table>
           {!rows.length && <div className="empty-state">{loading ? <LoaderCircle className="spin" size={27} /> : <Folder size={29} />}<h3>{loading ? "Opening saved workspace…" : query || filter !== "all" || rootFilter !== null ? "No placements match this view" : active ? "Waiting for the first saved entries" : snapshot?.job_id ? "No entries saved yet" : "Start with your source folders"}</h3><p>{loading ? "Reading local job records." : query || filter !== "all" || rootFilter !== null ? "Try a different search or show all entries." : "Scan selected folders to build an inventory, then compare their contents. Every discovered placement stays visible."}</p>{(query || filter !== "all" || rootFilter !== null) && <button onClick={() => { setQuery(""); setFilter("all"); setRootFilter(null); }}>Clear filters</button>}{error && !bootstrap && <button onClick={() => void load()}>Retry opening workspace</button>}</div>}
-        </div><div className="table-footer"><span>{rows.length ? `${count(currentPage * 150 + 1)}–${count(currentPage * 150 + rows.length)} of ${count(visible.length)}` : "0 placements"}</span><div><button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button><span>{currentPage + 1} / {pageCount}</span><button disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>Next</button></div></div></div>
-        {selected && <aside className="details" aria-label="Selected file details"><div className="details-heading"><span>PLACEMENT DETAILS</span><button aria-label="Close file details" onClick={() => setSelectedKey(null)}><X size={15} /></button></div><div className="selected-name"><EntryIcon entry={selected} /><h3>{selected.relative_path.split("/").at(-1) || "Source root"}</h3></div><span className="stage">{stage(selected, selectedComparison)}</span><dl><dt>Source folder</dt><dd>{rootName(selected.root_id)}</dd><dt>Root path</dt><dd className="path">{roots.find(root => root.id === selected.root_id)?.path}</dd><dt>Relative placement</dt><dd className="path">{selected.relative_path || "(source root)"}</dd><dt>Size</dt><dd>{selected.entry_type === "file" ? <>{size(selected.size)} <span className="muted">({count(selected.size)} bytes)</span></> : selected.entry_type === "directory" ? "Not calculated for folders" : "Not a regular file"}</dd><dt>Modified observation</dt><dd>{modified(selected.modified_ns)}</dd>{selected.link_target && <><dt>Link target</dt><dd className="path">{selected.link_target}</dd></>}</dl>
+        </div><div className="table-footer"><span>{count(rows.length)} rows shown · {count(visible.length)} {filtering ? "matching placements" : "saved placements"}</span><span>Folders retain their full hierarchy</span></div></div>
+        {selected && <aside className="details" aria-label="Selected file details"><div className="details-heading"><span>PLACEMENT DETAILS</span><button aria-label="Close file details" onClick={() => setSelectedKey(null)}><X size={15} /></button></div><div className="selected-name"><EntryIcon entry={selected} /><h3>{entryName(selected)}</h3></div><span className="stage">{stage(selected, selectedComparison)}</span><dl><dt>Source folder</dt><dd>{rootName(selected.root_id)}</dd><dt>Root path</dt><dd className="path">{roots.find(root => root.id === selected.root_id)?.path}</dd><dt>Relative placement</dt><dd className="path">{selected.relative_path || "(source root)"}</dd><dt>Size</dt><dd>{selected.entry_type === "file" ? <>{size(selected.size)} <span className="muted">({count(selected.size)} bytes)</span></> : selected.entry_type === "directory" ? "Not calculated for folders" : "Not a regular file"}</dd><dt>Modified observation</dt><dd>{modified(selected.modified_ns)}</dd>{selected.link_target && <><dt>Link target</dt><dd className="path">{selected.link_target}</dd></>}</dl>
           {(selected.stale || selectedComparison?.stale) && <p className="detail-warning">This observation is stale. Re-scan the source before relying on its evidence.</p>}
           {selectedComparison?.failure && <p className="detail-warning">{selectedComparison.failure}</p>}
           <div className="detail-section"><h4>Content evidence</h4>{selectedComparison ? <><dl><dt>Algorithm / generation</dt><dd>{selectedComparison.algorithm.toUpperCase()} · {selectedComparison.generation}</dd><dt>Sample · {selectedComparison.sample_format}</dt><dd className="hash">{selectedComparison.sample_hash || "No completed sample"}</dd><dt>Full-content hash</dt><dd className="hash">{selectedComparison.full_hash || "No completed full hash"}</dd><dt>Content read this attempt</dt><dd>{size(selectedComparison.bytes_read)}</dd></dl><p className="evidence-note">Samples only screen candidates. Unique-size and unique-sample files remain in the inventory.</p></> : <p>{selected.entry_type === "file" ? "Run Compare contents after the scan finishes to examine this file." : "Content comparison applies to regular files. This placement remains in the inventory."}</p>}</div>
-          <div className="detail-section"><h4>Other full-hash placements <span>{placements.length}</span></h4>{placements.map(placement => <button className="placement-link" key={placement.key} onClick={() => setSelectedKey(placement.key)}><span><strong>{rootName(placement.root_id)}</strong><small>{placement.relative_path}</small></span><ArrowRight size={14} /></button>)}{!placements.length && <p>No other placement has the same current full-content hash.</p>}<p className="evidence-note">Identical contents can belong at different paths. Saved hashes do not authorize copying or cleanup.</p></div>
+          <div className="detail-section"><h4>Other full-hash placements <span>{placements.length}</span></h4>{placements.map(placement => <button className="placement-link" key={placement.key} onClick={() => revealPlacement(placement.key)}><span><strong>{rootName(placement.root_id)}</strong><small>{placement.relative_path}</small></span><ArrowRight size={14} /></button>)}{!placements.length && <p>No other placement has the same current full-content hash.</p>}<p className="evidence-note">Identical contents can belong at different paths. Saved hashes do not authorize copying or cleanup.</p></div>
         </aside>}
       </div>
       <footer className="workspace-footer"><span><ShieldCheck size={13} /> Read-only inventory & comparison</span><span>Samples are candidates. Full hashes are observations. Every placement is retained.</span></footer>
