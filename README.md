@@ -111,4 +111,4 @@ Use synthetic fixtures for development. Keep real files, client information, sou
 
 ## License
 
-Folderloom's original code and documentation are licensed under the [MIT License](LICENSE). Third-party libraries and any future reused code retain their respective licenses and notices.
+Folderloom's original code and documentation are licensed under the [MIT License](LICENSE). Third-party libraries and any future reused code retain their respective licenses and notices. See the [dependency and artwork licensing review](docs/licensing.md) for the exact dependency inventory, packaged notices, source-availability links, and upstream qualifications.

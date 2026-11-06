@@ -8,7 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "build": "tsc --noEmit && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "licenses": "python3 ../../scripts/third_party_notices.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
