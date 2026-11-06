@@ -14,7 +14,7 @@ The graphical app can scan, compare, pause, resume, and reopen a saved job. Fold
 2. Select the sources and choose **Scan selected folders**. Folderloom saves the inventory as it works.
 3. Expand a folder to see its subfolders and files. Use **Expand all**, **Collapse all**, or search with **Command-F**. Search retains parent folders so every result has context.
 4. Choose **Compare contents**. Filter for full-hash matches, unique candidates, or entries needing attention.
-5. Matched rows show their total matching-location count. Select a file to see every matching location, including the selected one, with root and relative paths. Choose another location to reveal it in the tree. File details also show size, saved modification time, and comparison evidence.
+5. Click a file’s **matching locations** dropdown to expand every matching source directly beneath the row. Each location shows its root and relative path; **Show in tree** reveals that entry in its folder. File details also show size, saved modification time, and comparison evidence. Import choices belong to the future merge plan.
 
 ```text
 Copy 1
@@ -35,7 +35,7 @@ Every placement remains visible even when contents match. Partial samples screen
 
 Folderloom bundles its interface inside a native desktop window. There is no hosted backend, external font download, or source-content upload.
 
-Each job uses its own **SQLite database**; files stay in their source folders. On macOS, the demo stores jobs under `~/Library/Application Support/com.folderloom.demo/jobs/`. Previous databases remain on disk when a new scan starts. A named-project history browser and cross-machine project portability are not implemented yet.
+SQLite is bundled with the app: using a packaged app requires no database server, Rust, Node, or Python installation. The app creates its data directory automatically. Each job uses its own **SQLite database**; files stay in their source folders. On macOS, the demo stores jobs under `~/Library/Application Support/com.folderloom.demo/jobs/`. Previous databases remain on disk when a new scan starts. A named-project history browser and cross-machine project portability are not implemented yet.
 
 The demo loads the full inventory. Opening every folder or running a broad search can render every entry, so use small, bounded collections for now. Large-library responsiveness, direct NAS performance, and Windows support have not been validated. NAS folders must be mounted and accessible to the operating system before they can be selected.
 
