@@ -14,7 +14,7 @@ The graphical app can scan, compare, pause, resume, and reopen a saved job. Fold
 2. Select the sources and choose **Scan selected folders**. Folderloom saves the inventory as it works.
 3. Expand a folder to see its subfolders and files. Use **Expand all**, **Collapse all**, or search with **Command-F**. Search retains parent folders so every result has context.
 4. Choose **Compare contents**. Filter for full-hash matches, unique candidates, or entries needing attention.
-5. Select a file to inspect its path, size, saved modification time, and comparison evidence. Choose another matching placement to reveal it in the tree.
+5. Matched rows show their total matching-location count. Select a file to see every matching location, including the selected one, with root and relative paths. Choose another location to reveal it in the tree. File details also show size, saved modification time, and comparison evidence.
 
 ```text
 Copy 1
