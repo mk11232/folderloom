@@ -7,6 +7,7 @@ pinned URLs and hashes; adding a dependency without a notice fails closed.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -25,7 +26,26 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def validate_target():
+    tauri_target = os.environ.get("TAURI_ENV_TARGET_TRIPLE", "").strip()
+    cargo_target = os.environ.get("CARGO_BUILD_TARGET", "").strip()
+    if tauri_target and cargo_target and tauri_target != cargo_target:
+        raise SystemExit(f"Conflicting package targets: TAURI_ENV_TARGET_TRIPLE={tauri_target}, "
+                         f"CARGO_BUILD_TARGET={cargo_target}")
+    target = tauri_target or cargo_target
+    if not target:
+        host = re.search(r"^host: (.+)$", run("rustc", "-vV"), re.M)
+        if not host:
+            raise SystemExit("Cannot determine Rust host target for license notices")
+        target = host[1].strip()
+    if target != TARGET:
+        raise SystemExit(f"Unsupported license-notice target: {target}. "
+                         f"Only {TARGET} has been reviewed; review dependencies and notices "
+                         "for this target before packaging.")
+
+
 def generate():
+    validate_target()
     metadata = json.loads(run("cargo", "metadata", "--locked", "--offline",
                               "--format-version", "1", "--filter-platform", TARGET,
                               "--features", "folderloom-desktop/custom-protocol"))
