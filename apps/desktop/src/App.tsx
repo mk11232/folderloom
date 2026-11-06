@@ -13,6 +13,7 @@ const stateLabel = (value: string) => ({ running: "In progress", paused: "Paused
 function size(value: number) { if (value < 1024) return `${value} B`; const n = Math.min(Math.floor(Math.log(value) / Math.log(1024)), 4); return `${(value / 1024 ** n).toLocaleString(undefined, { maximumFractionDigits: 1 })} ${["B", "KB", "MB", "GB", "TB"][n]}`; }
 const count = (n: number) => n.toLocaleString();
 function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
+function sourceInput(source: Source) { return source.input_path === undefined ? source.path : source.input_path; }
 function modified(value: string | null) { if (!value) return "Not recorded"; const date = new Date(Number(BigInt(value) / 1_000_000n)); return Number.isNaN(date.getTime()) ? "Not recorded" : date.toLocaleString(); }
 function EntryIcon({ entry }: { entry: Entry }) { const Icon = entry.entry_type === "directory" ? Folder : entry.entry_type === "symlink" ? Link : File; return <Icon size={15} aria-hidden="true" />; }
 function stage(entry: Entry, comparison?: Comparison) {
@@ -49,8 +50,8 @@ export default function App() {
       if (version !== requestVersion.current) return;
       setBootstrap(result); setSnapshot(result.snapshot);
       const allSources = [...result.manifest.roots];
-      for (const root of result.snapshot.roots) if (!allSources.some(source => source.path === root.path)) allSources.push({ path: root.path, label: `Copy ${allSources.length + 1}` });
-      setSources(allSources); setChosen(allSources.map(root => root.path));
+      for (const root of result.snapshot.roots) if (!allSources.some(source => root.input_path !== null ? sourceInput(source) === root.input_path : source.input_path === null && source.path === root.path)) allSources.push({ path: root.path, input_path: root.input_path, label: `Copy ${allSources.length + 1}` });
+      setSources(allSources); setChosen(allSources.map(sourceInput).filter((path): path is string => path !== null));
       setSelectedKey(null); setRootFilter(null);
     } catch (e) { if (version === requestVersion.current) setError(message(e)); }
     finally { if (version === requestVersion.current) setLoading(false); }
@@ -101,7 +102,7 @@ export default function App() {
   const resumeInventory = snapshot?.job_id && inventory && ["paused", "running"].includes(inventory.state);
   const resumeComparison = comparison && ["paused", "running"].includes(comparison.state);
   const roots = snapshot?.roots ?? [];
-  const rootName = (id: number) => { const root = roots.find(root => root.id === id); return sources.find(source => source.path === root?.path)?.label ?? `Copy ${roots.findIndex(root => root.id === id) + 1}`; };
+  const rootName = (id: number) => { const root = roots.find(root => root.id === id); return sources.find(source => root?.input_path ? sourceInput(source) === root.input_path : source.path === root?.path)?.label ?? `Copy ${roots.findIndex(root => root.id === id) + 1}`; };
   const records = useMemo(() => {
     const result = new Map<string, Comparison>();
     for (const item of snapshot?.comparisons ?? []) { const previous = result.get(item.key); if (!previous || item.generation > previous.generation) result.set(item.key, item); }
@@ -143,10 +144,10 @@ export default function App() {
       <div className="brand"><span className="brand-mark"><Layers size={21} /></span><strong>Folderloom</strong><span className="demo-label">DEMO</span></div>
       <div className="sidebar-heading">SOURCE FOLDERS <span>{sources.length}</span></div>
       <div className="sources">
-        {sources.map(source => <label className={`source ${chosen.includes(source.path) ? "chosen" : ""}`} key={source.path}>
-          <input type="checkbox" checked={chosen.includes(source.path)} disabled={blocked} onChange={e => setChosen(previous => e.target.checked ? [...previous, source.path] : previous.filter(path => path !== source.path))} />
+        {sources.map(source => { const inputPath = sourceInput(source); return <label className={`source ${chosen.includes(inputPath ?? "") ? "chosen" : ""}`} key={source.path}>
+          <input type="checkbox" checked={chosen.includes(inputPath ?? "")} disabled={blocked || inputPath === null} onChange={e => { if (inputPath !== null) setChosen(previous => e.target.checked ? [...previous, inputPath] : previous.filter(path => path !== inputPath)); }} />
           <Folder size={17} /><span><strong>{source.label}</strong><small title={source.path}>{source.path}</small></span>
-        </label>)}
+        </label>; })}
         {!sources.length && <p className="sidebar-empty">Choose the folders you want to inspect. Their contents stay in place.</p>}
       </div>
       <button className="add-source" disabled={blocked} onClick={() => void addFolder()}><FolderPlus size={15} /> Add folder</button>
