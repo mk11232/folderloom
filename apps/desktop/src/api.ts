@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Source = { label: string; path: string };
+export type Source = { label: string; path: string; input_path?: string | null };
 export type Entry = { key: string; root_id: number; relative_path: string; entry_type: "file" | "directory" | "symlink" | "other"; size: number; modified_ns: string | null; link_target: string | null; excluded: boolean; stale: boolean; directory_complete: boolean };
 export type Comparison = { key: string; root_id: number; relative_path: string; generation: number; size: number; stage: string; algorithm: string; sample_format: string; sample_hash: string | null; full_hash: string | null; bytes_read: number; failure: string | null; stale: boolean };
 export type Snapshot = {
   job_id: string | null; worker: "scan" | "compare" | null; pause_requested: boolean; error: string | null;
-  roots: { id: number; path: string }[];
+  roots: { id: number; path: string; input_path: string | null }[];
   inventory_progress: { state: string; generation: number; entries: number; stale_entries: number; pending_directories: number; failed_directories: number; failures: number } | null;
   comparison_progress: { state: string; generation: number; files: number; pending_files: number; full_hashes: number; unique_sizes: number; unique_samples: number; failures: number; root_failures: number; bytes_read: number } | null;
   entries: Entry[]; comparisons: Comparison[];
