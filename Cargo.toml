@@ -1,0 +1,9 @@
+[package]
+name = "folderloom"
+version = "0.1.0"
+edition = "2024"
+description = "Deliberate consolidation of overlapping folder collections with source history and verification."
+license = "MIT"
+repository = "https://github.com/mk11232/folderloom"
+
+[dependencies]

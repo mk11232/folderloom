@@ -1,0 +1,27 @@
+/target
+
+# Local editor settings
+/.idea/
+.DS_Store
+
+# Private handoffs, source inventories, and job data
+/MEMORY.md
+/private/
+/local-data/
+/recovery/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Local configuration and future frontend build output
+.env
+.env.*
+!.env.example
+node_modules/
+dist/

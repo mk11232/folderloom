@@ -1,0 +1,3 @@
+# Desktop shell with a reusable Rust core
+
+Accepted at design interview question 34: use a Cargo workspace with a Rust core, a small development CLI, local SQLite job state, and a Tauri desktop application with a React/TypeScript interface. A separate frontend language adds tooling, but supports the folder-tree and table-based review workflow in a standalone window while retaining a path to Windows; all file-operation rules stay in the reusable Rust core. Upstream scanner reuse is a separate decision and must preserve Folderloom's complete inventory, file-placement, approved-plan, and recovery requirements.
