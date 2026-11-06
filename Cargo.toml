@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/folderloom-core", "crates/folderloom-cli"]
+members = ["crates/folderloom-core", "crates/folderloom-cli", "apps/desktop/src-tauri"]
+default-members = ["crates/folderloom-core", "crates/folderloom-cli"]
 resolver = "2"
 
 [workspace.package]
