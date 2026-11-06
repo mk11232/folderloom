@@ -53,6 +53,6 @@ Status: Shared product design and architecture baseline confirmed at question 34
 
 ## Implementation status
 
-The stage 1 read-only persistent inventory is implemented in the Rust core and development CLI. It stores metadata observations and progress in local SQLite, reopens saved jobs, and supports interruption, pause, and resume with stale observations and failures kept visible. Validation uses synthetic fixtures; inventory completion does not establish content equality or authorize copying or cleanup.
+Read-only persistent inventory and the staged comparison foundation ([#4](https://github.com/mk11232/folderloom/issues/4)) are implemented in the Rust core and development CLI. Local SQLite stores metadata observations, staged BLAKE3 evidence, and progress across interruption, pause, and resume, with stale observations, incomplete reads, and failures kept visible. Validation uses synthetic fixtures; inventory completion does not establish content equality, and comparison evidence does not authorize copying or cleanup.
 
-Staged hashing, folder suggestions, review plans, the Tauri desktop interface, copying and content verification, and separately approved cleanup remain future stages. Actual NAS behavior and Windows support remain unvalidated. See the [README](../README.md) for the current commands, validation coverage, and limitations.
+Folder suggestions and saved merge plans ([#5](https://github.com/mk11232/folderloom/issues/5)), the Tauri desktop interface, copying and destination verification, and separately approved cleanup remain future stages. Actual NAS behavior and Windows support remain unvalidated. See the [README](../README.md) for the current commands, validation coverage, and limitations.

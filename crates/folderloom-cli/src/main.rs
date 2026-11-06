@@ -1,4 +1,6 @@
-use folderloom_core::{EmptyFolders, Job, Options, Progress, State};
+use folderloom_core::{
+    ComparisonProgress, ComparisonState, EmptyFolders, Job, Options, Progress, State,
+};
 use std::{
     io::{self, Write},
     path::PathBuf,
@@ -9,11 +11,38 @@ const USAGE: &str = "Usage:
   folderloom resume DATABASE [--batch-size N] [--interactive]
   folderloom status DATABASE
   folderloom inventory DATABASE
+  folderloom compare DATABASE [--byte-budget N] [--interactive]
+  folderloom comparison DATABASE
 
 DATABASE's parent must already exist outside all source roots.
 Interactive mode commits a batch, then accepts next or pause on stdin (EOF pauses).
 Status is the last saved observation, not a fresh verification. Running can mean interrupted.
 Exit codes: 0 complete/paused/read successful; 2 finished with errors; 1 command/storage error.";
+fn print_comparison_progress(p: &ComparisonProgress) -> io::Result<()> {
+    println!(
+        "comparison checkpoint generation={} state={:?} files={} pending={} full_hashes={} unique_sizes={} unique_samples={} failures={} root_failures={} bytes_read={}",
+        p.generation,
+        p.state,
+        p.files,
+        p.pending_files,
+        p.full_hashes,
+        p.unique_sizes,
+        p.unique_samples,
+        p.failures,
+        p.root_failures,
+        p.bytes_read
+    );
+    io::stdout().flush()
+}
+fn print_comparison_root_failures(job: &Job) -> folderloom_core::Result<()> {
+    for failure in job.comparison_root_failures()? {
+        println!(
+            "comparison root failure generation={} root={} stale={}: {}",
+            failure.generation, failure.root_id, failure.stale, failure.message
+        );
+    }
+    Ok(())
+}
 fn print_progress(p: &Progress) -> io::Result<()> {
     println!(
         "checkpoint generation={} state={:?} entries={} stale={} pending={} failed_directories={} failures={}",
@@ -27,6 +56,20 @@ fn print_progress(p: &Progress) -> io::Result<()> {
     );
     io::stdout().flush()
 }
+enum InteractiveCommand {
+    Next,
+    Pause,
+    Invalid,
+}
+fn read_interactive_command() -> io::Result<InteractiveCommand> {
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(match line.trim() {
+        "next" => InteractiveCommand::Next,
+        "pause" | "" => InteractiveCommand::Pause,
+        _ => InteractiveCommand::Invalid,
+    })
+}
 fn run() -> Result<u8, Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
     let command = args.next().unwrap_or_default();
@@ -38,6 +81,7 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
     let mut roots = Vec::new();
     let mut options = Options::default();
     let mut budget = 256usize;
+    let mut byte_budget = 1024 * 1024usize;
     let mut interactive = false;
     let mut positional = false;
     while let Some(arg) = args.next() {
@@ -45,7 +89,14 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             positional = true;
             continue;
         }
-        if !positional && arg == "--batch-size" {
+        if !positional && arg == "--byte-budget" && command == "compare" {
+            byte_budget = args
+                .next()
+                .ok_or("missing byte budget")?
+                .to_str()
+                .ok_or("invalid byte budget")?
+                .parse()?;
+        } else if !positional && arg == "--batch-size" {
             budget = args
                 .next()
                 .ok_or("missing batch size")?
@@ -72,9 +123,69 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
     if budget == 0 {
         return Err("batch size must be positive".into());
     }
+    if byte_budget == 0 {
+        return Err("byte budget must be positive".into());
+    }
+    if command == "comparison" {
+        let job = Job::open(&database)?;
+        print_progress(&job.progress()?)?;
+        print_comparison_progress(&job.comparison_progress()?)?;
+        println!(
+            "Saved comparison evidence; not authority for copying or deletion. Samples never prove equality."
+        );
+        for root in job.roots()? {
+            println!("root={} path={:?}", root.id, root.path);
+        }
+        print_comparison_root_failures(&job)?;
+        for entry in job.comparisons()? {
+            println!(
+                "comparison generation={} root={} path={:?} bytes={} stage={:?} algorithm={} sample_format={} sample_hash={:?} full_hash={:?} bytes_read={} stale={} failure={:?}",
+                entry.generation,
+                entry.root_id,
+                entry.relative_path,
+                entry.size,
+                entry.stage,
+                entry.algorithm,
+                entry.sample_format,
+                entry.sample_hash,
+                entry.full_hash,
+                entry.bytes_read,
+                entry.stale,
+                entry.failure
+            );
+        }
+        return Ok(0);
+    }
+    if command == "compare" {
+        let mut job = Job::compare(&database)?;
+        loop {
+            let progress = job.compare_step(byte_budget)?;
+            print_comparison_progress(&progress)?;
+            match progress.state {
+                ComparisonState::Complete | ComparisonState::Paused => return Ok(0),
+                ComparisonState::FinishedWithErrors => return Ok(2),
+                ComparisonState::Running => {}
+                _ => return Err("comparison did not enter a runnable state".into()),
+            }
+            if interactive {
+                match read_interactive_command()? {
+                    InteractiveCommand::Next => {}
+                    InteractiveCommand::Pause => {
+                        print_comparison_progress(&job.pause_comparison()?)?;
+                        return Ok(0);
+                    }
+                    InteractiveCommand::Invalid => {
+                        job.pause_comparison()?;
+                        return Err("expected next or pause; comparison paused".into());
+                    }
+                }
+            }
+        }
+    }
     if command == "status" || command == "inventory" {
         let job = Job::open(&database)?;
         print_progress(&job.progress()?)?;
+        print_comparison_progress(&job.comparison_progress()?)?;
         println!("Saved observations only; resume starts a fresh validation generation.");
         for root in job.roots()? {
             println!("root={} path={:?}", root.id, root.path);
@@ -95,6 +206,7 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
                 );
             }
         }
+        print_comparison_root_failures(&job)?;
         for failure in job.failures()? {
             println!(
                 "failure generation={} root={} path={:?}: {}",
@@ -119,15 +231,13 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             State::Running => {}
         }
         if interactive {
-            let mut line = String::new();
-            io::stdin().read_line(&mut line)?;
-            match line.trim() {
-                "next" => {}
-                "pause" | "" => {
+            match read_interactive_command()? {
+                InteractiveCommand::Next => {}
+                InteractiveCommand::Pause => {
                     print_progress(&job.pause()?)?;
                     return Ok(0);
                 }
-                _ => {
+                InteractiveCommand::Invalid => {
                     job.pause()?;
                     return Err("expected next or pause; job paused".into());
                 }

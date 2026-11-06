@@ -1,6 +1,6 @@
 # Czkawka reuse and hashing evaluation
 
-Status: Read-only source review. The user accepted building Folderloom's own workflow with established libraries and ideas from Czkawka rather than forking the whole application. Specific library integration remains unimplemented and unbenchmarked.
+Status: Historical read-only source review. The user accepted building Folderloom's own workflow with established libraries and ideas from Czkawka rather than forking the whole application. BLAKE3 is now integrated into Folderloom's staged comparison foundation. No upstream implementation has been copied and no performance benchmark has been run.
 
 Reviewed upstream commit: `7b2383f88baf73aac99c99992fe54321b63b7f6a` in [qarmin/czkawka](https://github.com/qarmin/czkawka/tree/7b2383f88baf73aac99c99992fe54321b63b7f6a). The user identified Czkawka as the earlier example. No NAS scan, upstream build, or timing comparison was performed.
 
