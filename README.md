@@ -2,7 +2,7 @@
 
 # Folderloom
 
-A desktop workspace for making sense of overlapping folder collections. Open several folders, explore their files side by side, and compare contents before deciding how to consolidate them.
+A desktop workspace for making sense of overlapping folder collections. Open several folders, explore their files in one view, and compare contents before deciding how to consolidate them.
 
 **2026.11.1 · macOS development demo · read-only**
 
@@ -29,7 +29,7 @@ Copy 2
 
 Every placement remains visible even when contents match. Partial samples screen candidates; only completed full hashes are shown as full-hash evidence. A match does not authorize deletion.
 
-**Pause** saves a checkpoint. Resume the scan or comparison when ready. The app reopens the current saved job on launch; **Reopen saved job** reloads it from disk. **Re-scan** checks the saved sources again and refreshes comparison evidence. **Recover / Resume** handles a saved job that needs SQLite recovery.
+**Pause** saves a checkpoint. Resume the scan or comparison when ready. The app reopens the current saved job on launch; **Reopen saved job** reloads it from disk. **Re-scan** checks the saved sources again, refreshes the inventory, and invalidates old comparison evidence. Run **Compare contents** again for fresh evidence. **Recover / Resume** handles a saved job that needs SQLite recovery.
 
 ## Local files, local database
 
