@@ -19,7 +19,6 @@ const entries = [
 test("four source roots open by default; nested folders collapse without dropping placements", () => {
   const tree = buildInventoryTree(roots, entries);
   const rows = inventoryRows(tree, node => node.source);
-  assert.equal(tree.roots.length, 4);
   assert.deepEqual(rows.map(row => [row.node.entry.key, row.depth]), [
     ["opaque-root-a", 0], ["not/a/path", 1], ["opaque-root-b", 0],
     ["opaque-other-placement", 1], ["opaque-root-c", 0], ["opaque-root-d", 0],
@@ -35,24 +34,33 @@ test("native parent keys retain distinct placements even when escaped display pa
     entry("child-1", "bytes-ff", "\\xFF/report.txt", "file"),
     entry("child-2", "literal-backslash", "\\xFF/report.txt", "file"),
   ]);
-  assert.equal(tree.byEntry.get("child-1").parent.entry.key, "bytes-ff");
-  assert.equal(tree.byEntry.get("child-2").parent.entry.key, "literal-backslash");
-  assert.equal(entryName(tree.byEntry.get("bytes-ff").entry), "\\xFF");
-  assert.equal(inventoryRows(tree, () => true).length, 5);
+  const visible = expandedKey => inventoryRows(tree, node => node.source || node.entry.key === expandedKey)
+    .map(row => [row.node.entry.key, row.depth]);
+  assert.deepEqual(visible("bytes-ff"), [
+    ["opaque-root-a", 0], ["bytes-ff", 1], ["child-1", 2], ["literal-backslash", 1],
+  ]);
+  assert.deepEqual(visible("literal-backslash"), [
+    ["opaque-root-a", 0], ["bytes-ff", 1], ["literal-backslash", 1], ["child-2", 2],
+  ]);
+  const allRows = inventoryRows(tree, () => true);
+  assert.deepEqual(allRows.map(row => [row.node.entry.key, row.depth]), [
+    ["opaque-root-a", 0], ["bytes-ff", 1], ["child-1", 2], ["literal-backslash", 1], ["child-2", 2],
+  ]);
+  assert.deepEqual(allRows.filter(row => row.depth === 1).map(row => entryName(row.node.entry)), ["\\xFF", "\\xFF"]);
 });
 
 test("filtered matches retain ancestor context, allow collapse, and leave ordinary expansion intact", () => {
   const tree = buildInventoryTree(roots, entries);
   const normalExpansion = new Map([[tree.byEntry.get("not/a/path").id, true]]);
   const normal = node => normalExpansion.get(node.id) ?? node.source;
-  const before = inventoryRows(tree, normal);
+  const before = inventoryRows(tree, normal).map(row => [row.node.entry.key, row.depth]);
   const matches = new Set(["opaque-file-a"]);
   const context = matchingContext(tree, matches);
   assert.equal(matches.size, 1);
   assert.deepEqual(inventoryRows(tree, () => true, context).map(row => row.node.entry.key), ["opaque-root-a", "not/a/path", "opaque-subfolder", "opaque-file-a"]);
   const collapsed = new Set([tree.byEntry.get("not/a/path").id]);
   assert.deepEqual(inventoryRows(tree, node => !collapsed.has(node.id), context).map(row => row.node.entry.key), ["opaque-root-a", "not/a/path"]);
-  assert.deepEqual(inventoryRows(tree, normal), before);
+  assert.deepEqual(inventoryRows(tree, normal).map(row => [row.node.entry.key, row.depth]), before);
 });
 
 test("source filters preserve hierarchy and placement reveal opens every native ancestor", () => {
@@ -60,8 +68,10 @@ test("source filters preserve hierarchy and placement reveal opens every native 
   assert.deepEqual(inventoryRows(tree, () => true, undefined, 2).map(row => row.node.entry.key), ["opaque-root-b", "opaque-other-placement"]);
   const target = tree.byEntry.get("opaque-file-a");
   const expanded = new Set(ancestors(target).map(node => node.id));
-  const rows = inventoryRows(tree, node => expanded.has(node.id));
-  assert.equal(rows.find(row => row.node === target).depth, 3);
+  const rows = inventoryRows(tree, node => expanded.has(node.id), undefined, 1);
+  assert.deepEqual(rows.map(row => [row.node.entry.key, row.depth]), [
+    ["opaque-root-a", 0], ["not/a/path", 1], ["opaque-subfolder", 2], ["opaque-file-a", 3], ["opaque-file-b", 2],
+  ]);
 });
 
 test("missing parents during an incomplete scan remain visible beneath the correct source", () => {
@@ -75,5 +85,5 @@ test("comparison filtering uses the newest generation, including stale observati
   const base = { key: "opaque-file-a", generation: 1, stage: "full_hash", full_hash: "synthetic", stale: false };
   const latest = { ...base, generation: 3, stage: "pending_sample", stale: true };
   const records = latestComparisons([latest, base, { ...base, generation: 2 }]);
-  assert.equal(records.get(base.key), latest);
+  assert.deepEqual(records.get(base.key), latest);
 });
