@@ -395,3 +395,139 @@ fn killed_runner_reopens_without_false_completion_then_pauses_and_resumes() {
     assert!(reopened.status.success());
     assert!(String::from_utf8_lossy(&reopened.stdout).contains("nested/child"));
 }
+
+#[test]
+fn cli_reopens_root_gaps_separately_from_file_and_inventory_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let empty = temp.path().join("empty");
+    let good = temp.path().join("good");
+    fs::create_dir(&empty).unwrap();
+    fs::create_dir(&good).unwrap();
+    for name in ["a", "b"] {
+        fs::write(good.join(name), b"abc").unwrap();
+    }
+    let db = temp.path().join("job.sqlite");
+    let exe = env!("CARGO_BIN_EXE_folderloom");
+    assert!(
+        Command::new(exe)
+            .arg("scan")
+            .arg(&db)
+            .arg(&empty)
+            .arg(&good)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    fs::remove_dir(&empty).unwrap();
+    assert_eq!(
+        Command::new(exe)
+            .arg("compare")
+            .arg(&db)
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(2)
+    );
+    let before = fs::read(&db).unwrap();
+    for command in ["status", "comparison"] {
+        let saved = Command::new(exe).arg(command).arg(&db).output().unwrap();
+        assert!(saved.status.success());
+        let output = String::from_utf8_lossy(&saved.stdout);
+        assert!(output.contains("state=FinishedWithErrors"), "{output}");
+        assert!(output.contains("full_hashes=2"), "{output}");
+        assert!(output.contains("failures=1 root_failures=1"), "{output}");
+        let gap = output
+            .lines()
+            .find(|line| line.starts_with("comparison root failure "))
+            .expect("saved root gap details");
+        assert!(gap.contains("generation=1 root=1 stale=false"), "{gap}");
+        assert!(
+            output.contains(&format!(
+                "path={:?}",
+                fs::canonicalize(temp.path()).unwrap().join("empty")
+            )),
+            "{output}"
+        );
+    }
+    assert_eq!(fs::read(&db).unwrap(), before);
+    let job = Job::open(&db).unwrap();
+    assert_eq!(job.comparisons().unwrap().len(), 2);
+    assert_eq!(job.progress().unwrap().state, State::Complete);
+    assert!(job.failures().unwrap().is_empty());
+}
+
+#[test]
+fn interactive_scan_and_compare_share_whitespace_eof_and_invalid_command_behavior() {
+    for command in ["scan", "compare"] {
+        for (input, expected_code, checkpoints) in [
+            (" next \n pause \n", 0, 3),
+            (" \n", 0, 2),
+            ("", 0, 2),
+            ("invalid\n", 1, 1),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let source = temp.path().join("source");
+            fs::create_dir(&source).unwrap();
+            for name in ["a", "b", "c", "d"] {
+                fs::write(source.join(name), b"abc").unwrap();
+            }
+            let db = temp.path().join("job.sqlite");
+            let exe = env!("CARGO_BIN_EXE_folderloom");
+            let mut runner = Command::new(exe);
+            runner.arg(command).arg(&db).arg("--interactive");
+            if command == "compare" {
+                assert!(
+                    Command::new(exe)
+                        .arg("scan")
+                        .arg(&db)
+                        .arg(&source)
+                        .output()
+                        .unwrap()
+                        .status
+                        .success()
+                );
+                runner.args(["--byte-budget", "1"]);
+            } else {
+                runner.arg(&source).args(["--batch-size", "1"]);
+            }
+            let mut child = runner
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(input.as_bytes())
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(expected_code),
+                "command={command}, input={input:?}"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout)
+                    .matches("checkpoint")
+                    .count(),
+                checkpoints
+            );
+            let job = Job::open(&db).unwrap();
+            if command == "compare" {
+                assert_eq!(
+                    job.comparison_progress().unwrap().state,
+                    ComparisonState::Paused
+                );
+            } else {
+                assert_eq!(job.progress().unwrap().state, State::Paused);
+            }
+            if expected_code == 1 {
+                assert!(String::from_utf8_lossy(&output.stderr).contains("expected next or pause"));
+            }
+        }
+    }
+}

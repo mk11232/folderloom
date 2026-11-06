@@ -1,6 +1,8 @@
 //! Durable inventory and comparison jobs. No source mutation operations are exposed.
 mod compare;
-pub use compare::{Comparison, ComparisonProgress, ComparisonStage, ComparisonState};
+pub use compare::{
+    Comparison, ComparisonProgress, ComparisonRootFailure, ComparisonStage, ComparisonState,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::os::unix::{
     ffi::{OsStrExt, OsStringExt},

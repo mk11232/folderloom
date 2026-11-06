@@ -314,6 +314,8 @@ fn legacy_inventory_is_readable_and_migrates_without_inventing_identity_evidence
         ComparisonState::NotStarted
     );
     assert!(job.comparisons().unwrap().is_empty());
+    assert!(job.comparison_root_failures().unwrap().is_empty());
+    assert_eq!(job.comparison_progress().unwrap().root_failures, 0);
     assert_eq!(job.inventory().unwrap().len(), 1);
     drop(job);
     assert_eq!(fs::read(&db).unwrap(), before);
@@ -443,4 +445,194 @@ fn empty_files_have_canonical_full_hash_and_nonmatching_samples_remain_filters()
                 && r.sample_hash.is_some())
     );
     assert_ne!(records[2].sample_hash, records[3].sample_hash);
+}
+
+#[test]
+fn missing_empty_root_is_a_saved_comparison_gap_while_good_roots_finish() {
+    let temp = tempfile::tempdir().unwrap();
+    let empty = temp.path().join("empty");
+    let good = temp.path().join("good");
+    fs::create_dir(&empty).unwrap();
+    fs::create_dir(&good).unwrap();
+    for name in ["a", "b"] {
+        fs::write(good.join(name), b"abc").unwrap();
+    }
+    let db = temp.path().join("job.sqlite");
+    let mut job = Job::create(&db, &[empty.clone(), good], Options::default()).unwrap();
+    while job.step(64).unwrap().state == State::Running {}
+    drop(job);
+    fs::remove_dir(&empty).unwrap();
+    let mut job = Job::compare(&db).unwrap();
+    assert_eq!(job.comparison_progress().unwrap().root_failures, 1);
+    finish(&mut job);
+    drop(job);
+    let job = Job::open(&db).unwrap();
+    let progress = job.comparison_progress().unwrap();
+    assert_eq!(progress.state, ComparisonState::FinishedWithErrors);
+    assert_eq!(progress.full_hashes, 2);
+    assert_eq!(progress.failures, 1);
+    assert_eq!(progress.root_failures, 1);
+    let gaps = job.comparison_root_failures().unwrap();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(gaps[0].root_id, 1);
+    assert_eq!(gaps[0].generation, 1);
+    assert!(!gaps[0].stale);
+    assert!(!gaps[0].message.is_empty());
+    assert_eq!(job.comparisons().unwrap().len(), 2);
+    assert_eq!(job.progress().unwrap().state, State::Complete);
+    assert!(job.failures().unwrap().is_empty());
+}
+
+#[test]
+fn root_loss_during_comparison_is_saved_even_without_file_placements() {
+    let temp = tempfile::tempdir().unwrap();
+    let empty = temp.path().join("empty");
+    let good = temp.path().join("good");
+    fs::create_dir(&empty).unwrap();
+    fs::create_dir(&good).unwrap();
+    for name in ["a", "b"] {
+        fs::write(good.join(name), b"abc").unwrap();
+    }
+    let db = temp.path().join("job.sqlite");
+    let mut job = Job::create(&db, &[empty.clone(), good], Options::default()).unwrap();
+    while job.step(64).unwrap().state == State::Running {}
+    drop(job);
+    let mut job = Job::compare(&db).unwrap();
+    assert_eq!(job.compare_step(1).unwrap().state, ComparisonState::Running);
+    assert!(job.comparison_root_failures().unwrap().is_empty());
+    fs::remove_dir(&empty).unwrap();
+    finish(&mut job);
+    drop(job);
+    let job = Job::open(&db).unwrap();
+    assert_eq!(
+        job.comparison_progress().unwrap().state,
+        ComparisonState::FinishedWithErrors
+    );
+    assert_eq!(job.comparison_progress().unwrap().full_hashes, 2);
+    assert_eq!(job.comparison_root_failures().unwrap().len(), 1);
+    assert!(job.failures().unwrap().is_empty());
+}
+
+#[test]
+fn inaccessible_empty_root_is_a_comparison_gap() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir(&source).unwrap();
+    let db = temp.path().join("job.sqlite");
+    scan(&db, &source);
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut job = Job::compare(&db).unwrap();
+    finish(&mut job);
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o700)).unwrap();
+    drop(job);
+    let job = Job::open(&db).unwrap();
+    assert_eq!(
+        job.comparison_progress().unwrap().state,
+        ComparisonState::FinishedWithErrors
+    );
+    assert_eq!(job.comparison_progress().unwrap().root_failures, 1);
+    assert!(job.comparisons().unwrap().is_empty());
+}
+
+#[test]
+fn changed_root_directory_leaves_a_gap_without_discarding_unchanged_file_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    fs::create_dir(&source).unwrap();
+    for name in ["a", "b"] {
+        fs::write(source.join(name), b"abc").unwrap();
+    }
+    let db = temp.path().join("job.sqlite");
+    scan(&db, &source);
+    fs::write(source.join("new-entry"), b"not inventoried").unwrap();
+    let mut job = Job::compare(&db).unwrap();
+    finish(&mut job);
+    drop(job);
+    let job = Job::open(&db).unwrap();
+    let progress = job.comparison_progress().unwrap();
+    assert_eq!(progress.state, ComparisonState::FinishedWithErrors);
+    assert_eq!(progress.full_hashes, 2);
+    assert_eq!(progress.failures, 1);
+    assert_eq!(progress.root_failures, 1);
+    assert!(
+        job.comparison_root_failures().unwrap()[0]
+            .message
+            .contains("changed since inventory")
+    );
+    assert_eq!(job.inventory().unwrap().len(), 3);
+    assert!(job.failures().unwrap().is_empty());
+}
+
+#[test]
+fn empty_and_link_only_roots_cannot_silently_disappear_or_be_replaced() {
+    use std::os::unix::fs::symlink;
+    for link_only in [false, true] {
+        for replacement in ["missing", "directory", "symlink"] {
+            for during_comparison in [false, true] {
+                let temp = tempfile::tempdir().unwrap();
+                let source = temp.path().join("source");
+                let moved = temp.path().join("original");
+                fs::create_dir(&source).unwrap();
+                if link_only {
+                    symlink("missing-target", source.join("link")).unwrap();
+                }
+                let db = temp.path().join("job.sqlite");
+                scan(&db, &source);
+                let mut writer = during_comparison.then(|| Job::compare(&db).unwrap());
+                fs::rename(&source, &moved).unwrap();
+                match replacement {
+                    "directory" => fs::create_dir(&source).unwrap(),
+                    "symlink" => symlink(&moved, &source).unwrap(),
+                    _ => {}
+                }
+                let mut job = writer.take().unwrap_or_else(|| Job::compare(&db).unwrap());
+                finish(&mut job);
+                drop(job);
+                let job = Job::open(&db).unwrap();
+                let progress = job.comparison_progress().unwrap();
+                assert_eq!(
+                    progress.state,
+                    ComparisonState::FinishedWithErrors,
+                    "link_only={link_only} replacement={replacement} during={during_comparison}"
+                );
+                assert_eq!(progress.failures, 1);
+                assert_eq!(progress.root_failures, 1);
+                assert_eq!(progress.files, 0);
+                assert!(job.comparisons().unwrap().is_empty());
+                assert_eq!(job.comparison_root_failures().unwrap().len(), 1);
+                assert!(job.failures().unwrap().is_empty());
+                assert_eq!(job.progress().unwrap().state, State::Complete);
+                if link_only {
+                    assert_eq!(
+                        fs::read_link(moved.join("link")).unwrap(),
+                        Path::new("missing-target")
+                    );
+                }
+                drop(job);
+                match replacement {
+                    "directory" => fs::remove_dir(&source).unwrap(),
+                    "symlink" => fs::remove_file(&source).unwrap(),
+                    _ => {}
+                }
+                fs::rename(&moved, &source).unwrap();
+                let mut job = Job::resume(&db).unwrap();
+                assert_eq!(
+                    job.comparison_progress().unwrap().state,
+                    ComparisonState::Invalidated
+                );
+                assert!(job.comparison_root_failures().unwrap()[0].stale);
+                while job.step(64).unwrap().state == State::Running {}
+                drop(job);
+                let mut job = Job::compare(&db).unwrap();
+                finish(&mut job);
+                assert_eq!(
+                    job.comparison_progress().unwrap().state,
+                    ComparisonState::Complete
+                );
+                assert_eq!(job.comparison_progress().unwrap().failures, 0);
+                assert!(job.comparison_root_failures().unwrap()[0].stale);
+            }
+        }
+    }
 }

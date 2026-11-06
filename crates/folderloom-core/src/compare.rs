@@ -56,6 +56,14 @@ pub struct Comparison {
     pub failure: Option<String>,
     pub stale: bool,
 }
+/// A saved root-level comparison gap, separate from inventory and file evidence.
+#[derive(Debug, Clone)]
+pub struct ComparisonRootFailure {
+    pub root_id: i64,
+    pub generation: i64,
+    pub message: String,
+    pub stale: bool,
+}
 #[derive(Debug, Clone)]
 pub struct ComparisonProgress {
     pub state: ComparisonState,
@@ -65,7 +73,9 @@ pub struct ComparisonProgress {
     pub full_hashes: usize,
     pub unique_sizes: usize,
     pub unique_samples: usize,
+    /// Total current-generation file and root failures.
     pub failures: usize,
+    pub root_failures: usize,
     pub bytes_read: u64,
 }
 pub(super) struct ActiveRead {
@@ -77,6 +87,7 @@ pub(super) struct ActiveRead {
 }
 pub(super) fn create_schema(db: &Connection) -> Result<()> {
     db.execute_batch("CREATE TABLE comparison_job (id INTEGER PRIMARY KEY CHECK(id=1),generation INTEGER,state TEXT,bytes_read INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE comparison_root_failures (root INTEGER,generation INTEGER,message TEXT,PRIMARY KEY(root,generation));
     CREATE TABLE comparisons (root INTEGER,path BLOB,generation INTEGER,size INTEGER,stage TEXT,algorithm TEXT,sample_format TEXT,sample_hash TEXT,full_hash TEXT,bytes_read INTEGER NOT NULL DEFAULT 0,failure TEXT,PRIMARY KEY(root,path,generation));")?;
     Ok(())
 }
@@ -129,6 +140,7 @@ impl Job {
         self.db.execute("INSERT INTO comparison_job(id,generation,state) VALUES(1,?,'running') ON CONFLICT(id) DO UPDATE SET bytes_read=CASE WHEN generation=excluded.generation THEN bytes_read ELSE 0 END,generation=excluded.generation,state='running'",[generation])?;
         self.db.execute("INSERT OR IGNORE INTO comparisons(root,path,generation,size,stage,algorithm,sample_format) SELECT root,path,?,size,'pending_sample',?,? FROM entries WHERE kind='file'",params![generation,ALGORITHM,SAMPLE_FORMAT])?;
         self.db.execute("UPDATE comparisons SET stage=CASE WHEN stage='sampling' THEN 'pending_sample' ELSE 'pending_full' END,bytes_read=0 WHERE generation=? AND stage IN ('sampling','hashing')",[generation])?;
+        self.validate_comparison_roots(generation)?;
         for record in self.comparisons()?.into_iter().filter(|r| !r.stale) {
             if record.stage == ComparisonStage::Failed {
                 continue;
@@ -180,6 +192,7 @@ impl Job {
             unique_sizes: 0,
             unique_samples: 0,
             failures: 0,
+            root_failures: 0,
             bytes_read: total,
         };
         for r in self.comparisons()?.into_iter().filter(|r| !r.stale) {
@@ -192,7 +205,46 @@ impl Job {
                 _ => p.pending_files += 1,
             }
         }
+        p.root_failures = self
+            .comparison_root_failures()?
+            .iter()
+            .filter(|r| !r.stale)
+            .count();
+        p.failures += p.root_failures;
         Ok(p)
+    }
+    /// Saved root gaps only; reading this does not inspect source paths.
+    pub fn comparison_root_failures(&self) -> Result<Vec<ComparisonRootFailure>> {
+        let version: i64 = self.db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version == 1 {
+            return Ok(vec![]);
+        }
+        Ok(self.db.prepare("SELECT root,f.generation,message,f.generation!=j.generation FROM comparison_root_failures f CROSS JOIN job j ORDER BY f.generation,root")?.query_map([], |r| Ok(ComparisonRootFailure { root_id: r.get(0)?, generation: r.get(1)?, message: r.get(2)?, stale: r.get(3)? }))?.collect::<std::result::Result<_,_>>()?)
+    }
+    fn validate_comparison_roots(&self, generation: i64) -> Result<()> {
+        for root in self.roots()? {
+            let validation = (|| -> Result<()> {
+                let directory = self.open_comparison_root(root.id)?;
+                let saved: Option<String> = self.db.query_row(
+                    "SELECT observation FROM entries WHERE root=? AND path=? AND generation=? AND kind='directory'",
+                    params![root.id, bytes(Path::new("")), generation],
+                    |r| r.get(0),
+                ).optional()?.flatten();
+                // Legacy inventories may lack stamps; do not invent observations.
+                if let Some(saved) = saved
+                    && directory_stamp(&directory.metadata()?) != saved
+                {
+                    return Err(Error::Invalid(
+                        "source root directory changed since inventory; rescan required".into(),
+                    ));
+                }
+                Ok(())
+            })();
+            if let Err(e) = validation {
+                self.db.execute("INSERT OR IGNORE INTO comparison_root_failures(root,generation,message) VALUES(?,?,?)", params![root.id,generation,e.to_string()])?;
+            }
+        }
+        Ok(())
     }
     /// Saved observations only; stale records are retained across inventory generations.
     pub fn comparisons(&self) -> Result<Vec<Comparison>> {
@@ -252,9 +304,8 @@ impl Job {
         }
         Ok(())
     }
-    fn open_observed(&self, r: &Comparison) -> Result<fs::File> {
-        self.expected_observation(r)?;
-        let root = self.validate_root(r.root_id)?;
+    fn open_comparison_root(&self, root_id: i64) -> Result<fs::File> {
+        let root = self.validate_root(root_id)?;
         // Every component is opened relative to an owned directory descriptor.
         // NOFOLLOW rejects leaf and ancestor links; NONBLOCK prevents FIFO hangs.
         let mut dir = fs::File::open("/")?;
@@ -263,14 +314,19 @@ impl Job {
                 dir = open_at(&dir, name, true)?;
             }
         }
-        let expected_root: String = self.db.query_row(
-            "SELECT identity FROM roots WHERE id=?",
-            [r.root_id],
-            |row| row.get(0),
-        )?;
+        let expected_root: String =
+            self.db
+                .query_row("SELECT identity FROM roots WHERE id=?", [root_id], |row| {
+                    row.get(0)
+                })?;
         if identity(&dir.metadata()?) != expected_root {
             return Err(Error::Invalid("source root changed identity".into()));
         }
+        Ok(dir)
+    }
+    fn open_observed(&self, r: &Comparison) -> Result<fs::File> {
+        self.expected_observation(r)?;
+        let mut dir = self.open_comparison_root(r.root_id)?;
         let parts: Vec<_> = r.relative_path.components().collect();
         let mut relative = PathBuf::new();
         for (i, part) in parts.iter().enumerate() {
@@ -341,6 +397,7 @@ impl Job {
                 let p = self.comparison_progress()?;
                 if p.pending_files == 0 {
                     // Final validation catches roots or completed placements lost while unrelated work ran.
+                    self.validate_comparison_roots(generation)?;
                     for r in self
                         .comparisons()?
                         .into_iter()

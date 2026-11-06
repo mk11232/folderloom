@@ -20,7 +20,7 @@ Status is the last saved observation, not a fresh verification. Running can mean
 Exit codes: 0 complete/paused/read successful; 2 finished with errors; 1 command/storage error.";
 fn print_comparison_progress(p: &ComparisonProgress) -> io::Result<()> {
     println!(
-        "comparison checkpoint generation={} state={:?} files={} pending={} full_hashes={} unique_sizes={} unique_samples={} failures={} bytes_read={}",
+        "comparison checkpoint generation={} state={:?} files={} pending={} full_hashes={} unique_sizes={} unique_samples={} failures={} root_failures={} bytes_read={}",
         p.generation,
         p.state,
         p.files,
@@ -29,9 +29,19 @@ fn print_comparison_progress(p: &ComparisonProgress) -> io::Result<()> {
         p.unique_sizes,
         p.unique_samples,
         p.failures,
+        p.root_failures,
         p.bytes_read
     );
     io::stdout().flush()
+}
+fn print_comparison_root_failures(job: &Job) -> folderloom_core::Result<()> {
+    for failure in job.comparison_root_failures()? {
+        println!(
+            "comparison root failure generation={} root={} stale={}: {}",
+            failure.generation, failure.root_id, failure.stale, failure.message
+        );
+    }
+    Ok(())
 }
 fn print_progress(p: &Progress) -> io::Result<()> {
     println!(
@@ -45,6 +55,20 @@ fn print_progress(p: &Progress) -> io::Result<()> {
         p.failures
     );
     io::stdout().flush()
+}
+enum InteractiveCommand {
+    Next,
+    Pause,
+    Invalid,
+}
+fn read_interactive_command() -> io::Result<InteractiveCommand> {
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(match line.trim() {
+        "next" => InteractiveCommand::Next,
+        "pause" | "" => InteractiveCommand::Pause,
+        _ => InteractiveCommand::Invalid,
+    })
 }
 fn run() -> Result<u8, Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -112,6 +136,7 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
         for root in job.roots()? {
             println!("root={} path={:?}", root.id, root.path);
         }
+        print_comparison_root_failures(&job)?;
         for entry in job.comparisons()? {
             println!(
                 "comparison generation={} root={} path={:?} bytes={} stage={:?} algorithm={} sample_format={} sample_hash={:?} full_hash={:?} bytes_read={} stale={} failure={:?}",
@@ -143,15 +168,13 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
                 _ => return Err("comparison did not enter a runnable state".into()),
             }
             if interactive {
-                let mut line = String::new();
-                io::stdin().read_line(&mut line)?;
-                match line.trim() {
-                    "next" => {}
-                    "pause" | "" => {
+                match read_interactive_command()? {
+                    InteractiveCommand::Next => {}
+                    InteractiveCommand::Pause => {
                         print_comparison_progress(&job.pause_comparison()?)?;
                         return Ok(0);
                     }
-                    _ => {
+                    InteractiveCommand::Invalid => {
                         job.pause_comparison()?;
                         return Err("expected next or pause; comparison paused".into());
                     }
@@ -183,6 +206,7 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
                 );
             }
         }
+        print_comparison_root_failures(&job)?;
         for failure in job.failures()? {
             println!(
                 "failure generation={} root={} path={:?}: {}",
@@ -207,15 +231,13 @@ fn run() -> Result<u8, Box<dyn std::error::Error>> {
             State::Running => {}
         }
         if interactive {
-            let mut line = String::new();
-            io::stdin().read_line(&mut line)?;
-            match line.trim() {
-                "next" => {}
-                "pause" | "" => {
+            match read_interactive_command()? {
+                InteractiveCommand::Next => {}
+                InteractiveCommand::Pause => {
                     print_progress(&job.pause()?)?;
                     return Ok(0);
                 }
-                _ => {
+                InteractiveCommand::Invalid => {
                     job.pause()?;
                     return Err("expected next or pause; job paused".into());
                 }

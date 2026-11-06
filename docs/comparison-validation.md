@@ -24,6 +24,24 @@ The ten core comparison tests cover canonical full hashes for ordinary and empty
 
 At integrated branch checkpoint `183ddf6`, local macOS validation passed `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`: 26 tests total (4 CLI process, 10 comparison, 12 inventory). This is local evidence; CI results are reported separately.
 
+## Independent review fixes
+
+The missing-root review finding was reproduced through the public `Job` seam using an empty root plus a good root containing an identical pair. After removing the empty root, the first focused regression failed with `Complete` instead of `FinishedWithErrors`. The same regression passed after adding independently persisted root gaps. No file-comparison row is fabricated for the empty root, the good root still produces two full hashes, and inventory remains `Complete` with no inventory failures.
+
+Three further focused core tests each failed with `Complete` instead of `FinishedWithErrors` before their corresponding implementation change, then passed:
+
+- An empty root disappears after comparison starts; completion must independently validate it.
+- An empty root becomes unreadable; root validation must open the directory rather than rely only on metadata.
+- A root gains an entry after inventory; its recorded directory change signals leave an explicit root gap while unchanged files retain their full hashes.
+
+A CLI regression then failed because reopened `status` omitted root-specific counts and details. It passed after exposing saved root gaps in `status`, `inventory`, and `comparison`. The regression reads `status` and `comparison` in new processes, checks the root ID/path mapping and failure message, confirms exit 2 from comparison, and verifies the read-only commands leave database bytes unchanged.
+
+Additional public regression coverage passed when introduced: empty and symlink-only roots, each missing or replaced by a new directory or symlink, at preparation and completion (12 synthetic cases). Restoring the original root and rescanning marks the old gap stale; the new comparison finishes without current-generation failures. A CLI parser behavior test passed before and after extracting the shared command reader; it covers whitespace, `next`, `pause`, blank input, EOF, and invalid input for both scan and comparison while keeping their pause operations separate.
+
+`ComparisonRootFailure` and `Job::comparison_root_failures()` expose root ID, inventory generation, message, and stale status. There is at most one retained root gap per root/generation. `ComparisonProgress.failures` counts file and root gaps together, and `root_failures` gives the root-only subset. These are saved observations; querying them does not freshly inspect sources. Root gaps remain until a new inventory generation, and historical gaps remain readable. The additive v1-to-v2 upgrade includes the root-gap table; the unreleased v2 development format is updated directly, with no additional migration promised for old v2 development fixtures.
+
+Local macOS validation of the review fixes uses the SDK override below. Formatting, warning-free clippy, and all 33 workspace tests pass (6 CLI process, 15 comparison, 12 inventory). This is local evidence; Linux/macOS CI and independent re-review remain separate checks.
+
 ## Scope and limits
 
 Saved observations do not assert that sources remain unchanged after the last inspection. Sample matches cannot prove equality. Full hashes establish saved content evidence for an observed generation and placement; they are not destination coverage or cleanup authorization. Completed evidence and incomplete read checkpoints are distinct.
