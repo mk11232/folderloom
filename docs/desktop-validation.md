@@ -27,3 +27,9 @@ A single reserved background worker owns writes; commands return cached checkpoi
 ## Evidence boundaries
 
 A native packaged UI exercise and any private local sample review are separate from automated synthetic tests. Building on macOS does not establish Windows support or real NAS scanning performance. The current core is Unix-specific. Whole inventory snapshots are appropriate for this bounded demo; very large collections will need paging and measured refresh costs before production scale claims.
+
+## Observed packaged macOS workflow
+
+The release app built from runtime commit `1e27e48` was installed in the user's Applications folder and launched without a development server. Through the native window, a deliberately selected private local sample was scanned and compared to completion with zero reported gaps. The full-hash filter and placement detail panel displayed the corresponding saved evidence and matching locations. Quitting the application and launching it again reopened the same job identifier, inventory generation, entry count, full-hash count and unique-candidate count.
+
+The sample was copied from a bounded selection of NAS folders as separately authorized setup. Each destination file was SHA-256 checked against the source bytes read; source identity, size and modification-time checks stayed unchanged. Local copies preserve contents, relative paths and modification times, but use private permissions rather than NAS flags or ACLs. This is evidence for running the app on local copies, not for direct NAS scanning or a production copy/verification engine. Sample files, full source paths, provenance and screenshots remain private and are not repository artifacts.
