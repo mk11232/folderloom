@@ -17,6 +17,7 @@ Preserve selected snapshots or dependent folder collections separately when thei
 ## Design
 
 - [Product specification](docs/SPEC.md)
+- [Implementation issue](https://github.com/mk11232/folderloom/issues/1)
 - [Architecture and delivery sequence](docs/DESIGN.md)
 - [Requirements record](docs/requirements.md)
 - [Domain glossary](GLOSSARY.md)

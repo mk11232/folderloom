@@ -1,6 +1,6 @@
 # Folderloom: deliberate folder consolidation
 
-Status: Synthesized from the accepted design interview and subsequent Czkawka evaluation. The user confirmed testing through the shared Rust job interface, with real temporary folders, SQLite, and process restarts. This spec is local; it has not been published to an issue tracker or labeled ready-for-agent.
+Status: Accepted product specification, published as [GitHub issue #1](https://github.com/mk11232/folderloom/issues/1) with the ready-for-agent label. The user confirmed testing through the shared Rust job interface, with real temporary folders, SQLite, and process restarts. Implement in the stated milestone order, starting with the read-only persistent inventory.
 
 ## Problem Statement
 
@@ -185,4 +185,4 @@ Add desktop tests once the UI exists to prove source selection, review edits, pa
 - Czkawka was reviewed at commit 7b2383f88baf73aac99c99992fe54321b63b7f6a. Its staged filtering is useful prior art; its duplicate results and hash cache are not Folderloom's complete inventory or operation journal.
 - Exact hash tuning, cache-validity mechanics, platform metadata coverage, and Windows release timing require implementation evidence. No NAS performance benchmark has been run for this design.
 - Real client data, inventories, and source paths must remain outside committed fixtures. Use synthetic data for development and tests; validate real NAS behavior only on explicitly selected bounded data.
-- No Git remote, project issue tracker, or configured triage-label vocabulary was found. The to-spec workflow expects project setup and eventual publication with ready-for-agent; neither publication nor that label has occurred.
+- Project tracker: GitHub Issues for mk11232/folderloom. The ready-for-agent label means the spec is sufficiently defined to begin the first milestone; it does not collapse later milestones or authorize operations on real source files.
