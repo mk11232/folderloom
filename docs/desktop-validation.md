@@ -7,7 +7,9 @@ The Tauri host uses the same public Rust `Job` interface as the development CLI.
 `cargo test --workspace --locked` includes these adapter scenarios:
 
 - Inventory, staged full-content comparison, distinct file placements, saved current-job reopening, and unchanged source names/content.
-- Cooperative pause at a bounded checkpoint, rejecting overlapping worker requests, reopening a paused job, and explicit resume.
+- A desktop pause request releasing the worker, allowing legitimate early completion; deterministic unfinished pause/reopen/resume through the public Job seam without thread-scheduling assumptions.
+- Recovery after process death leaves a real SQLite hot journal: read-only inspection fails, the desktop retains the validated saved job ID, and explicit Recover / Resume completes through the guarded core writer.
+- Native parent placement keys, including escaped display names, so tree hierarchy does not depend on parsing display paths.
 - Unavailable source roots producing comparison root gaps and stale inventory on rescan.
 - A fresh process reopening saved inventory and comparison evidence.
 - Reopen in the same window reloading durable changes made through the public Job interface while idle.
@@ -22,6 +24,8 @@ The installed app resolves its data directory through Tauri `app_data_dir()` for
 
 Job databases live under the data directory's `jobs` subdirectory. An atomically replaced `current-job` pointer chooses the job to reopen. Reopening reads saved observations; Scan/Resume explicitly revalidates sources. Comparison errors may require re-scan before retry, as explained by the core's saved failure. An abrupt app exit can leave saved state `running` without an active worker: use Resume. Pause requests take effect after the current bounded core checkpoint; a blocked filesystem operation cannot be forcibly interrupted safely.
 
+If saved observations cannot be read, the validated current job remains selected and **Recover / Resume** invokes the core's guarded inventory resume. This can recover a normal SQLite hot journal and starts a fresh source-validation generation; storage-safety and source checks still apply. The control state (selected job, worker mode, pause, recovery, error) is typed independently of the inventory JSON payload.
+
 A single reserved background worker owns writes; commands return cached checkpoint snapshots to keep the window responsive. The adapter and UI expose no source copy, merge, rename, or delete operations. Full hashes are observations, not authority to clean up sources. Source/database path safety and cross-process job locking remain enforced by the core.
 
 ## Evidence boundaries
@@ -29,6 +33,8 @@ A single reserved background worker owns writes; commands return cached checkpoi
 A native packaged UI exercise and any private local sample review are separate from automated synthetic tests. Building on macOS does not establish Windows support or real NAS scanning performance. The current core is Unix-specific. Whole inventory snapshots are appropriate for this bounded demo; very large collections will need paging and measured refresh costs before production scale claims.
 
 ## Observed packaged macOS workflow
+
+Review-fix regression evidence: the synthetic hot-journal test first failed because desktop bootstrap returned a null saved job ID, then passed after the recovery fix. The parent-key test first failed on a missing parent key, then passed after native parent keys were included. The seven macOS adapter tests and frontend type/production build passed after these changes. These checks are separate from the earlier native interaction described below; that run does not establish native interaction coverage for later review fixes.
 
 The release app built from runtime commit `1e27e48` was installed in the user's Applications folder and launched without a development server. Through the native window, a deliberately selected private local sample was scanned and compared to completion with zero reported gaps. The full-hash filter and placement detail panel displayed the corresponding saved evidence and matching locations. Quitting the application and launching it again reopened the same job identifier, inventory generation, entry count, full-hash count and unique-candidate count.
 

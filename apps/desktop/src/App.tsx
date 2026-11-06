@@ -99,6 +99,7 @@ export default function App() {
   const inventory = snapshot?.inventory_progress;
   const comparison = snapshot?.comparison_progress;
   const inventoryFinished = inventory && ["complete", "finished_with_errors"].includes(inventory.state);
+  const recoveryRequired = Boolean(snapshot?.job_id && snapshot.recovery_required);
   const resumeInventory = snapshot?.job_id && inventory && ["paused", "running"].includes(inventory.state);
   const resumeComparison = comparison && ["paused", "running"].includes(comparison.state);
   const roots = snapshot?.roots ?? [];
@@ -137,7 +138,7 @@ export default function App() {
   const rootFailures = snapshot?.root_failures ?? [];
   const comparisonFailures = (snapshot?.comparisons ?? []).filter(record => record.failure);
   const currentGaps = (inventory?.failures ?? 0) + (comparison?.failures ?? 0) + (inventory?.stale_entries ?? 0);
-  const currentState = active ? (snapshot?.pause_requested ? "Saving pause…" : snapshot?.worker === "scan" ? "Scanning folders" : "Comparing contents") : resumeComparison ? "Comparison interrupted or paused" : resumeInventory ? "Inventory interrupted or paused" : comparison && comparison.state !== "not_started" ? stateLabel(comparison.state) : inventory ? stateLabel(inventory.state) : "Ready to scan";
+  const currentState = active ? (snapshot?.pause_requested ? "Saving pause…" : snapshot?.worker === "scan" ? "Scanning folders" : "Comparing contents") : recoveryRequired ? "Saved job needs recovery" : resumeComparison ? "Comparison interrupted or paused" : resumeInventory ? "Inventory interrupted or paused" : comparison && comparison.state !== "not_started" ? stateLabel(comparison.state) : inventory ? stateLabel(inventory.state) : "Ready to scan";
 
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Sources and saved job">
@@ -163,14 +164,14 @@ export default function App() {
 
     <main>
       <header className="toolbar"><div><div className="eyebrow">WORKSPACE</div><h1>{bootstrap?.manifest.title || "Folder comparison"}</h1></div><div className="toolbar-actions">
-        <button disabled={blocked || !snapshot?.job_id} onClick={() => void act(() => api.run("scan"))}>{resumeInventory ? <Play size={15} /> : <RefreshCw size={15} />}{resumeInventory ? "Resume scan" : "Re-scan"}</button>
+        <button disabled={blocked || !snapshot?.job_id} onClick={() => void act(() => api.run("scan"))}>{resumeInventory || recoveryRequired ? <Play size={15} /> : <RefreshCw size={15} />}{recoveryRequired ? "Recover / Resume" : resumeInventory ? "Resume scan" : "Re-scan"}</button>
         <button className="primary" disabled={blocked || !inventoryFinished} onClick={() => void act(() => api.run("compare"))}><Layers size={15} />{resumeComparison ? "Resume comparison" : "Compare contents"}</button>
         {active && <button disabled={busy || snapshot?.pause_requested} onClick={() => void act(api.pause)}><Pause size={15} />{snapshot?.pause_requested ? "Pausing…" : "Pause"}</button>}
       </div></header>
-      {(error || snapshot?.error) && <div className="alert error" role="alert"><AlertCircle size={17} /><div><strong>Unable to finish this action</strong><p>{error || snapshot?.error}</p><small>Check folder access, then retry the action or reopen the saved job.</small></div><button aria-label="Dismiss error" onClick={() => { setError(null); setSnapshot(previous => previous ? { ...previous, error: null } : previous); }}><X size={15} /></button></div>}
+      {(error || snapshot?.error) && <div className="alert error" role="alert"><AlertCircle size={17} /><div><strong>Unable to finish this action</strong><p>{error || snapshot?.error}</p><small>{recoveryRequired ? "Choose Recover / Resume to recover the saved job and revalidate its sources. If recovery fails, check the reported storage or folder access problem and retry." : "Check folder access, then retry the action or reopen the saved job."}</small></div><button aria-label="Dismiss error" onClick={() => { setError(null); setSnapshot(previous => previous ? { ...previous, error: null } : previous); }}><X size={15} /></button></div>}
       {bootstrap?.configuration_error && <details className="configuration"><summary><AlertCircle size={14} /> Demo configuration unavailable — choose folders to begin</summary><p>{bootstrap.configuration_error}</p><code>{bootstrap.manifest_path}</code></details>}
       <section className="progress-strip" aria-label="Saved progress" aria-busy={active}>
-        <div className="progress-state">{active ? <LoaderCircle className="spin" size={19} /> : currentGaps ? <AlertCircle size={19} /> : <Check size={19} />}<span><strong>{currentState}</strong><small>{active ? "Saving progress at each checkpoint" : snapshot?.job_id ? "Saved observations · re-scan to refresh" : "Select source folders, then start a scan"}</small></span></div>
+        <div className="progress-state">{active ? <LoaderCircle className="spin" size={19} /> : currentGaps ? <AlertCircle size={19} /> : <Check size={19} />}<span><strong>{currentState}</strong><small>{active ? "Saving progress at each checkpoint" : recoveryRequired ? "Recover / Resume revalidates the saved sources" : snapshot?.job_id ? "Saved observations · re-scan to refresh" : "Select source folders, then start a scan"}</small></span></div>
         <div className="metric"><strong>{count(inventory?.entries ?? 0)}</strong><span>entries saved</span></div>
         <div className="metric"><strong>{count(comparison?.full_hashes ?? 0)}</strong><span>full hashes</span></div>
         <div className="metric"><strong>{count((comparison?.unique_sizes ?? 0) + (comparison?.unique_samples ?? 0))}</strong><span>unique candidates</span></div>

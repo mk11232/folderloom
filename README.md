@@ -41,7 +41,7 @@ npm run typecheck
 npm run tauri dev
 ```
 
-Build a standalone application with `npm run tauri build -- --bundles app`. Open `target/release/bundle/macos/Folderloom.app` in Finder. `npm run build` checks TypeScript and produces the bundled frontend assets; `npm run dev` alone starts the frontend development server and cannot perform native job operations.
+Build a standalone application with `npm run tauri build -- --bundles app`. From the repository root, open `target/release/bundle/macos/Folderloom Demo.app` in Finder (or the corresponding bundle under your custom `CARGO_TARGET_DIR`). `npm run build` checks TypeScript and produces the bundled frontend assets; `npm run dev` alone starts the frontend development server and cannot perform native job operations.
 
 The app reads an optional private `demo.json` from its application data directory (Tauri identifier `com.folderloom.demo`). Its shape is `{ "title": "Folder comparison", "description": "Local sample", "roots": [{ "label": "Copy 1", "path": "..." }] }`; supply actual local absolute paths privately, never commit them. When the configuration is absent, **Add folder** opens the native directory picker. Select sources and choose **Scan selected folders** to create a new saved job. Each new job retains the previous database on disk; the app automatically reopens the current saved job, and **Reopen saved job** reloads its saved state. This first interface does not include a historical job browser.
 

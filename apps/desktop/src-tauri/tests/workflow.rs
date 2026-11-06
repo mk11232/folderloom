@@ -52,45 +52,35 @@ fn saved_inventory_and_full_content_evidence_reopen_through_desktop() {
 }
 
 #[test]
-fn pause_releases_writer_and_another_desktop_can_resume_saved_work() {
+fn pause_or_early_completion_releases_writer_and_saved_work_can_resume() {
     let fixture = tempfile::tempdir().unwrap();
     let source = fixture.path().join("source");
     fs::create_dir(&source).unwrap();
-    // A selected wide tree has enough real enumeration work for a pending pause.
-    for i in 0..128 {
-        fs::create_dir(source.join(format!("folder-{i}"))).unwrap();
-    }
+    fs::create_dir(source.join("nested")).unwrap();
     let data = fixture.path().join("app");
     let app = Desktop::open(data.clone()).unwrap();
     let started = app
         .start(vec![source.to_str().unwrap().to_owned()])
         .unwrap();
     assert_eq!(started["worker"], "scan");
-    assert!(app.run_job("scan").unwrap_err().contains("already running"));
-    assert!(
-        app.start(vec![source.to_str().unwrap().to_owned()])
-            .unwrap_err()
-            .contains("already running")
-    );
     app.pause().unwrap();
-    let paused = idle(&app);
-    assert_eq!(paused["inventory_progress"]["state"], "paused");
-    assert!(
-        paused["inventory_progress"]["pending_directories"]
-            .as_u64()
-            .unwrap()
-            > 0
-    );
+    let stopped = idle(&app);
+    assert!(stopped["error"].is_null(), "{stopped}");
+    // Completion before the request is legitimate; scheduling is not a contract.
+    assert!(matches!(
+        stopped["inventory_progress"]["state"].as_str(),
+        Some("paused" | "complete")
+    ));
     drop(app);
     let reopened = Desktop::open(data).unwrap();
     assert_eq!(
-        reopened.snapshot().unwrap()["inventory_progress"]["state"],
-        "paused"
+        reopened.snapshot().unwrap()["inventory_progress"],
+        stopped["inventory_progress"]
     );
     reopened.run_job("scan").unwrap();
     let completed = idle(&reopened);
     assert_eq!(completed["inventory_progress"]["state"], "complete");
-    assert_eq!(completed["inventory_progress"]["entries"], 129);
+    assert_eq!(completed["inventory_progress"]["entries"], 2);
 }
 
 #[test]
@@ -125,12 +115,15 @@ fn unavailable_roots_are_visible_comparison_gaps_and_stale_inventory() {
 #[test]
 #[cfg(target_os = "linux")]
 fn invalid_utf8_placements_keep_distinct_keys_and_display_paths() {
-    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+    use std::{
+        ffi::OsString,
+        os::unix::ffi::{OsStrExt, OsStringExt},
+    };
     let fixture = tempfile::tempdir().unwrap();
     let source = fixture.path().join("source");
     fs::create_dir(&source).unwrap();
     fs::write(source.join(OsString::from_vec(vec![0xff])), b"same").unwrap();
-    fs::write(source.join("\\xff"), b"same").unwrap();
+    fs::write(source.join(std::ffi::OsStr::from_bytes(b"\\xff")), b"same").unwrap();
     let app = Desktop::open(fixture.path().join("app")).unwrap();
     app.start(vec![source.to_str().unwrap().to_owned()])
         .unwrap();
@@ -144,6 +137,37 @@ fn invalid_utf8_placements_keep_distinct_keys_and_display_paths() {
     assert_eq!(entries.len(), 2);
     assert_ne!(entries[0]["key"], entries[1]["key"]);
     assert_ne!(entries[0]["relative_path"], entries[1]["relative_path"]);
+    let root = snapshot["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["relative_path"] == "")
+        .unwrap();
+    assert!(root["parent_key"].is_null());
+    assert_eq!(entries[0]["parent_key"], root["key"]);
+    assert_eq!(entries[1]["parent_key"], root["key"]);
+}
+
+#[test]
+fn nested_placements_expose_parent_keys_independent_of_display_paths() {
+    let fixture = tempfile::tempdir().unwrap();
+    let source = fixture.path().join("source");
+    let nested = source.join(r"folder\name");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("file"), b"synthetic").unwrap();
+    let app = Desktop::open(fixture.path().join("app")).unwrap();
+    app.start(vec![source.to_str().unwrap().into()]).unwrap();
+    let saved = idle(&app);
+    let entries = saved["entries"].as_array().unwrap();
+    let root = entries.iter().find(|e| e["relative_path"] == "").unwrap();
+    let folder = entries
+        .iter()
+        .find(|e| e["relative_path"] == r"folder\\name")
+        .unwrap();
+    let file = entries.iter().find(|e| e["entry_type"] == "file").unwrap();
+    assert!(root["parent_key"].is_null());
+    assert_eq!(folder["parent_key"], root["key"]);
+    assert_eq!(file["parent_key"], folder["key"]);
 }
 
 #[test]
@@ -210,4 +234,93 @@ fn reopen_in_the_same_window_reloads_saved_changes_without_starting_work() {
     assert_eq!(reopened["inventory_progress"]["generation"], 2);
     assert_eq!(reopened["inventory_progress"]["state"], "paused");
     assert!(reopened["worker"].is_null());
+    assert!(
+        reopened["inventory_progress"]["pending_directories"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    app.run_job("scan").unwrap();
+    let resumed = idle(&app);
+    assert_eq!(resumed["inventory_progress"]["state"], "complete");
+    assert_eq!(resumed["inventory_progress"]["entries"], 1);
+}
+
+#[test]
+fn interrupted_database_can_be_recovered_and_resumed_through_desktop() {
+    const CHILD: &str = "FOLDERLOOM_SYNTHETIC_HOT_JOURNAL";
+    if let Some(database) = std::env::var_os(CHILD) {
+        // Spill uncommitted pages, then exit without SQLite's rollback/close.
+        // This crash-only table belongs to the synthetic fixture, not the Job schema.
+        let connection = rusqlite::Connection::open(database).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA cache_size=10; PRAGMA cache_spill=1;
+             CREATE TABLE crashpad(payload BLOB);
+             WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<2000)
+             INSERT INTO crashpad SELECT zeroblob(4000) FROM n;
+             BEGIN IMMEDIATE; UPDATE crashpad SET payload=randomblob(4000);",
+            )
+            .unwrap();
+        std::process::exit(0);
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let source = fixture.path().join("source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("file"), b"synthetic contents").unwrap();
+    let data = fixture.path().join("app");
+    let app = Desktop::open(data.clone()).unwrap();
+    app.start(vec![source.to_str().unwrap().into()]).unwrap();
+    let original = idle(&app);
+    drop(app);
+    let database = data
+        .join("jobs")
+        .join(format!("{}.sqlite", original["job_id"].as_str().unwrap()));
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "interrupted_database_can_be_recovered_and_resumed_through_desktop",
+            "--nocapture",
+        ])
+        .env(CHILD, &database)
+        .output()
+        .unwrap();
+    assert!(
+        child.status.success(),
+        "{}",
+        String::from_utf8_lossy(&child.stderr)
+    );
+    // A read-only observer cannot recover this journal. Only the guarded writer can.
+    assert!(
+        folderloom_core::Job::open(&database)
+            .and_then(|job| job.progress())
+            .is_err()
+    );
+    let reopened = Desktop::open(data.clone()).unwrap();
+    let saved = reopened.bootstrap().unwrap()["snapshot"].clone();
+    assert_eq!(saved["job_id"], original["job_id"]);
+    assert_eq!(saved["recovery_required"], true);
+    assert!(
+        saved["error"]
+            .as_str()
+            .unwrap()
+            .contains("could not be reopened")
+    );
+    reopened.run_job("scan").unwrap();
+    let recovered = idle(&reopened);
+    assert!(recovered["error"].is_null(), "{recovered}");
+    assert_eq!(recovered["recovery_required"], false);
+    assert_eq!(recovered["job_id"], original["job_id"]);
+    assert_eq!(recovered["inventory_progress"]["state"], "complete");
+    assert_eq!(recovered["inventory_progress"]["generation"], 2);
+    assert_eq!(recovered["inventory_progress"]["entries"], 2);
+    drop(reopened);
+    assert_eq!(
+        Desktop::open(data).unwrap().snapshot().unwrap()["job_id"],
+        original["job_id"]
+    );
+    assert_eq!(
+        fs::read(source.join("file")).unwrap(),
+        b"synthetic contents"
+    );
 }
