@@ -17,6 +17,65 @@ fn idle(app: &Desktop) -> serde_json::Value {
 }
 
 #[test]
+fn first_launch_creates_storage_without_configuration_or_a_job() {
+    let fixture = tempfile::tempdir().unwrap();
+    let data = fixture.path().join("new-app-data");
+    assert!(!data.exists());
+
+    let app = Desktop::open(data.clone()).unwrap();
+    let bootstrap = app.bootstrap().unwrap();
+    assert!(data.join("jobs").is_dir());
+    assert_eq!(fs::read_dir(data.join("jobs")).unwrap().count(), 0);
+    assert!(!data.join("current-job").exists());
+    assert!(!data.join("demo.json").exists());
+    assert!(bootstrap["configuration_error"].is_null(), "{bootstrap}");
+    assert_eq!(bootstrap["manifest"]["title"], "Folderloom");
+    assert!(
+        bootstrap["manifest"]["roots"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let snapshot = &bootstrap["snapshot"];
+    assert!(snapshot["roots"].as_array().unwrap().is_empty());
+    assert!(snapshot["job_id"].is_null());
+    assert!(snapshot["worker"].is_null());
+    assert!(snapshot["error"].is_null());
+}
+
+#[test]
+fn existing_invalid_or_unreadable_configuration_reports_a_problem() {
+    for unreadable in [false, true] {
+        let fixture = tempfile::tempdir().unwrap();
+        let data = fixture.path().join("app");
+        let app = Desktop::open(data.clone()).unwrap();
+        let manifest = data.join("demo.json");
+        if unreadable {
+            // A directory reliably fails file reads, including when tests run as root.
+            fs::create_dir(&manifest).unwrap();
+        } else {
+            fs::write(&manifest, b"{invalid JSON").unwrap();
+        }
+        let bootstrap = app.bootstrap().unwrap();
+        assert!(
+            bootstrap["configuration_error"]
+                .as_str()
+                .unwrap()
+                .contains("Demo configuration unavailable:")
+        );
+        assert!(
+            bootstrap["manifest"]["roots"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(bootstrap["snapshot"]["job_id"].is_null());
+        assert!(bootstrap["snapshot"]["worker"].is_null());
+        assert_eq!(fs::read_dir(data.join("jobs")).unwrap().count(), 0);
+    }
+}
+
+#[test]
 fn saved_inventory_and_full_content_evidence_reopen_through_desktop() {
     let fixture = tempfile::tempdir().unwrap();
     let source = fixture.path().join(r"source\name");
@@ -183,7 +242,27 @@ fn saved_job_reopens_in_a_fresh_process() {
             app.run_job("compare").unwrap();
             idle(&app);
         }
-        let saved = app.snapshot().unwrap();
+        let bootstrap = app.bootstrap().unwrap();
+        assert!(bootstrap["configuration_error"].is_null(), "{bootstrap}");
+        assert!(
+            bootstrap["manifest"]["roots"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!base.join("app/demo.json").exists());
+        let saved = &bootstrap["snapshot"];
+        let job_id = saved["job_id"].as_str().unwrap();
+        let database = base.join("app/jobs").join(format!("{job_id}.sqlite"));
+        assert!(
+            fs::read(database)
+                .unwrap()
+                .starts_with(b"SQLite format 3\0")
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("app/current-job")).unwrap(),
+            job_id
+        );
         assert_eq!(saved["inventory_progress"]["entries"], 3);
         assert_eq!(saved["comparison_progress"]["full_hashes"], 2);
         assert!(saved["worker"].is_null());
