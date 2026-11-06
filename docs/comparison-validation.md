@@ -16,8 +16,18 @@ Additional process tests validate the finished public behavior:
 
 These added behavior checks passed against the first implementation. The interruption test's initial harness run closed the pause process's stdout before its final checkpoint and failed with a broken pipe; retaining the reader fixed the harness. This was not a product regression or a claimed implementation red.
 
+## Core coverage and integrated validation
+
+The core's first tracer test failed on the missing public comparison API, then passed after implementation at `2bfe5ee`. It checks independent placements, unique-file retention, and the known canonical BLAKE3 digest of `abc`. Nine further public-interface regression tests passed when introduced; they are coverage, not additional observed red/green cycles.
+
+The ten core comparison tests cover canonical full hashes for ordinary and empty content; matching edge samples with different middle contents; byte-bounded reads; unique samples; pause/reopen and incomplete-read restart; completed evidence reuse; changed, missing, unreadable, and link-replaced sources; root and ancestor replacement during reads; generation invalidation; legacy schema migration and required rescan; single-writer/read-only behavior; and preservation of source contents, names, mtimes, hidden entries, symlinks, and empty-directory exclusions. Invalid UTF-8 placement coverage runs on Linux because macOS APFS rejects those fixture names.
+
+At integrated branch checkpoint `183ddf6`, local macOS validation passed `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`: 26 tests total (4 CLI process, 10 comparison, 12 inventory). This is local evidence; CI results are reported separately.
+
 ## Scope and limits
 
 Saved observations do not assert that sources remain unchanged after the last inspection. Sample matches cannot prove equality. Full hashes establish saved content evidence for an observed generation and placement; they are not destination coverage or cleanup authorization. Completed evidence and incomplete read checkpoints are distinct.
 
 Local validation uses macOS and the installed SDK override `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`. Linux CI is separate evidence. Windows, real NAS behavior, adversarial filesystem races, folder mappings, merge plans, copying, and cleanup are outside this delivery.
+
+The byte budget bounds source-content reads per checkpoint. It does not bound database iteration, metadata I/O, or waiting on an unavailable share. This serial implementation has no fastest-hash or NAS performance claim. Schema v1-to-v2 writer upgrades are one-way for the job database; read-only v1 observers do not migrate it, and old inventory observations need a fresh scan to supply identity evidence.
