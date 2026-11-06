@@ -38,7 +38,7 @@ Sources checked: [Tauri overview](https://v2.tauri.app/start/), [Tauri architect
 
 The user identified Czkawka as the upstream hashing example and accepted retaining Folderloom's own application and durable inventory, using established libraries and selectively learning from or adapting upstream techniques. The [source review](czkawka-evaluation.md) records the evidence. No fork or dependency integration has been performed. Richer image, audio, and document analysis remain possible later extensions.
 
-## Repository layout to implement
+## Repository layout
 
 ```text
 folderloom/

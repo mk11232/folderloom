@@ -2,7 +2,7 @@
 
 Folderloom is a planned desktop application for consolidating overlapping folder collections into a chosen primary destination while preserving meaningful structure, differing file contents, and source history.
 
-**Status: read-only persistent inventory and staged comparison.** The Rust core and development CLI scan explicitly selected folders into local SQLite, compare file contents, reopen saved observations, and resume interrupted jobs. Folder mappings, merge plans, the desktop interface, copying, destination verification, and cleanup remain future work.
+**Status: read-only inventory, staged comparison, and a macOS desktop demo.** The Rust core, development CLI, and Tauri desktop interface scan explicitly selected folders into local SQLite, compare file contents, reopen saved observations, and resume interrupted jobs. Folder mappings, merge plans, copying, destination verification, and cleanup remain future work.
 
 ## Intended workflow
 
@@ -28,6 +28,28 @@ Preserve selected snapshots or dependent folder collections separately when thei
 The accepted architecture is a reusable Rust engine, local SQLite job state, and a Tauri desktop interface using React and TypeScript. macOS with local and OS-connected NAS folders is the first target; Windows support will follow or join the initial release when validated.
 
 Folderloom uses its own consolidation workflow and will build on established libraries and techniques from projects such as Czkawka. It is not a fork of Czkawka, and no upstream implementation has been copied into this project.
+
+## Run the macOS desktop demo
+
+The desktop interface uses the same public Rust `Job` operations as the CLI. It bundles its React interface inside the application; no hosted backend, external fonts, or source-content upload is involved. The demo exposes inventory and comparison only.
+
+From `apps/desktop`, using Node 22.12+ (Node 26 was used during development), npm, Rust, and the macOS native build prerequisites:
+
+```sh
+npm ci
+npm run typecheck
+npm run tauri dev
+```
+
+Build a standalone application with `npm run tauri build -- --bundles app`. Open `target/release/bundle/macos/Folderloom.app` in Finder. `npm run build` checks TypeScript and produces the bundled frontend assets; `npm run dev` alone starts the frontend development server and cannot perform native job operations.
+
+The app reads an optional private `demo.json` from its application data directory (Tauri identifier `com.folderloom.demo`). Its shape is `{ "title": "Folder comparison", "description": "Local sample", "roots": [{ "label": "Copy 1", "path": "..." }] }`; supply actual local absolute paths privately, never commit them. When the configuration is absent, **Add folder** opens the native directory picker. Select sources and choose **Scan selected folders** to create a new saved job. Each new job retains the previous database on disk; the app automatically reopens the current saved job, and **Reopen saved job** reloads its saved state. This first interface does not include a historical job browser.
+
+After inventory finishes, **Compare contents** runs size screening, edge samples, and full hashing through the core. **Pause** cooperatively stops after a saved checkpoint; **Resume scan** or **Resume comparison** continues the corresponding work. **Re-scan** starts a new validation generation for the current job and invalidates old comparison evidence. The source checkboxes apply to a new scan; re-scanning an existing job uses that job's saved roots.
+
+Search paths with Command-F, filter by source or evidence, and select a placement to inspect the full root/relative path, recorded modification time, sample and full hashes, and other current full-hash placements. Table pagination keeps rendering bounded; the current core read API still loads the full inventory. Unique-size and unique-sample candidates remain visible. The gaps view includes inventory failures, root gaps, failed content reads, and their generations; stale entries can be inspected through **Needs attention**. Samples do not prove equality, and saved hashes do not authorize copying or cleanup.
+
+Private source files, manifests, provenance, databases, and screenshots belong outside the public repository. Development fixtures must be synthetic. A developer's bounded local copy of a NAS sample is setup only; it does not establish native app support for scanning a live NAS or for Windows. Packaged macOS interaction and persistence validation are recorded separately from frontend type/build checks.
 
 ## Run the development CLI
 
