@@ -27,7 +27,7 @@ Preserve selected snapshots or dependent folder collections separately when thei
 
 The accepted architecture is a reusable Rust engine, local SQLite job state, and a Tauri desktop interface using React and TypeScript. macOS with local and OS-connected NAS folders is the first target; Windows support will follow or join the initial release when validated.
 
-Folderloom uses its own consolidation workflow and will build on established libraries and techniques from projects such as Czkawka. It is not a fork of Czkawka, and no upstream implementation has been copied into this scaffold.
+Folderloom uses its own consolidation workflow and will build on established libraries and techniques from projects such as Czkawka. It is not a fork of Czkawka, and no upstream implementation has been copied into this project.
 
 ## Run the inventory CLI
 

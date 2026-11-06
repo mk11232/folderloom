@@ -53,4 +53,6 @@ Status: Shared product design and architecture baseline confirmed at question 34
 
 ## Implementation status
 
-The source is still the generated Hello World program. The user accepted the workspace, Rust core, local SQLite, Tauri desktop approach, and read-only-first implementation sequence at question 34. No implementation changes have been made during the design interview.
+The stage 1 read-only persistent inventory is implemented in the Rust core and development CLI. It stores metadata observations and progress in local SQLite, reopens saved jobs, and supports interruption, pause, and resume with stale observations and failures kept visible. Validation uses synthetic fixtures; inventory completion does not establish content equality or authorize copying or cleanup.
+
+Staged hashing, folder suggestions, review plans, the Tauri desktop interface, copying and content verification, and separately approved cleanup remain future stages. Actual NAS behavior and Windows support remain unvalidated. See the [README](../README.md) for the current commands, validation coverage, and limitations.
