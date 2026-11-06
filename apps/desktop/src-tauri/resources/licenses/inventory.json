@@ -1,6 +1,6 @@
 {
-  "cargo_lock_sha256": "e8017c3fe30db9c9677ef8ecce2c1254fe8141b00cd86607a571dfe0886d48a3",
-  "npm_lock_sha256": "d8ab2e71d7f63d0b6a93ab46219223159ac346e2d15c26e8c6be85c1b4f974f9",
+  "cargo_lock_sha256": "b0921130d5e32b28e1ecbe7376fe86586ff81947659fb0d735b6a832c352a741",
+  "npm_lock_sha256": "9382706647a8afd5ecd08154931d4212faa9006ff38ebd9d11558715181428ba",
   "packages": [
     {
       "authors": [

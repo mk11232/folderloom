@@ -831,7 +831,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "folderloom-cli"
-version = "0.1.0"
+version = "2026.11.1"
 dependencies = [
  "folderloom-core",
  "tempfile",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "folderloom-core"
-version = "0.1.0"
+version = "2026.11.1"
 dependencies = [
  "blake3",
  "fs2",
@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "folderloom-desktop"
-version = "0.1.0"
+version = "2026.11.1"
 dependencies = [
  "folderloom-core",
  "rusqlite",
