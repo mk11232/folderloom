@@ -1,6 +1,6 @@
 # Folderloom: deliberate folder consolidation
 
-Status: Accepted product specification, published as [GitHub issue #1](https://github.com/mk11232/folderloom/issues/1) with the ready-for-agent label. The user confirmed testing through the shared Rust job interface, with real temporary folders, SQLite, and process restarts. Implement in the stated milestone order, starting with the read-only persistent inventory.
+Status: Accepted product specification, published as [GitHub issue #1](https://github.com/mk11232/folderloom/issues/1) with the ready-for-agent label. The user confirmed testing through the shared Rust job interface, with real temporary folders, SQLite, and process restarts. The first milestone now has a reusable core and development CLI implementation; see [README.md](../README.md) for commands, verification, and limits. Later milestones remain unimplemented.
 
 ## Problem Statement
 
@@ -136,7 +136,7 @@ The first coding milestone is stage 1 only. Later capabilities in this spec are 
 
 The primary test seam is the Rust core's public job interface, also used by the CLI and desktop app. Tests create real temporary filesystem trees and local SQLite stores, invoke externally meaningful job operations, close and reopen state, and inspect observable inventory, plans, file placements, and history. Process-level tests exercise termination and restart through the thin development runner.
 
-Test externally observable behavior and guarantees, not private helper names, SQL statement text, thread scheduling, or data-structure layouts. Add internal seams only where a concrete failure cannot be exercised reliably through the public interface. There is no existing test-suite prior art in this repository: the current application is the generated Hello World program. Upstream Czkawka tests may inform cases but do not validate Folderloom.
+Test externally observable behavior and guarantees, not private helper names, SQL statement text, thread scheduling, or data-structure layouts. Add internal seams only where a concrete failure cannot be exercised reliably through the public interface. The initial scaffold had no test-suite prior art. The inventory milestone now tests this seam through synthetic filesystem and subprocess fixtures. Upstream Czkawka tests may inform cases but do not validate Folderloom.
 
 ### Acceptance matrix
 

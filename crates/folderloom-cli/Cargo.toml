@@ -1,0 +1,15 @@
+[package]
+name = "folderloom-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "folderloom"
+path = "src/main.rs"
+
+[dependencies]
+folderloom-core = { path = "../folderloom-core" }
+
+[dev-dependencies]
+tempfile = "3"
