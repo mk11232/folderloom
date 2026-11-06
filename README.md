@@ -46,6 +46,7 @@ This is a development demo, not a signed or notarized downloadable release. Stan
 ```sh
 cd apps/desktop
 npm ci
+cargo fetch --locked
 npm run tauri dev
 ```
 
