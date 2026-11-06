@@ -1,4 +1,6 @@
-//! Durable, metadata-only inventory jobs. No source mutation operations are exposed.
+//! Durable inventory and comparison jobs. No source mutation operations are exposed.
+mod compare;
+pub use compare::{Comparison, ComparisonProgress, ComparisonStage, ComparisonState};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::os::unix::{
     ffi::{OsStrExt, OsStringExt},
@@ -89,6 +91,7 @@ struct Active {
 pub struct Job {
     db: Connection,
     active: Option<Active>,
+    comparison_active: Option<compare::ActiveRead>,
     _lock: Option<fs::File>,
 }
 fn bytes(path: &Path) -> &[u8] {
@@ -131,12 +134,13 @@ impl Job {
             .create_new(true)
             .open(&database)?;
         let db = Connection::open(&database)?;
-        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; BEGIN IMMEDIATE; PRAGMA user_version=1;
+        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; BEGIN IMMEDIATE; PRAGMA user_version=2;
           CREATE TABLE job (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT, generation INTEGER, ignore_empty INTEGER);
           CREATE TABLE roots (id INTEGER PRIMARY KEY, path BLOB UNIQUE, identity TEXT);
-          CREATE TABLE entries (root INTEGER, path BLOB, kind TEXT, size INTEGER, modified TEXT, target BLOB, excluded INTEGER DEFAULT 0, generation INTEGER, PRIMARY KEY(root,path));
+          CREATE TABLE entries (root INTEGER, path BLOB, kind TEXT, size INTEGER, modified TEXT, observation TEXT, target BLOB, excluded INTEGER DEFAULT 0, generation INTEGER, PRIMARY KEY(root,path));
           CREATE TABLE directories (root INTEGER, path BLOB, state TEXT, stamp TEXT, PRIMARY KEY(root,path));
           CREATE TABLE failures (root INTEGER, path BLOB, message TEXT, generation INTEGER);")?;
+        compare::create_schema(&db)?;
         db.execute(
             "INSERT INTO job VALUES (1,'running',1,?)",
             [options.empty_folders == EmptyFolders::Ignore],
@@ -144,6 +148,7 @@ impl Job {
         let mut job = Self {
             db,
             active: None,
+            comparison_active: None,
             _lock: Some(lock),
         };
         for root in roots {
@@ -167,6 +172,7 @@ impl Job {
         Ok(Self {
             db: Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?,
             active: None,
+            comparison_active: None,
             _lock: None,
         })
     }
@@ -179,12 +185,14 @@ impl Job {
         let mut job = Self {
             db: Connection::open(&database)?,
             active: None,
+            comparison_active: None,
             _lock: Some(lock),
         };
+        compare::migrate(&job.db)?;
         let roots = job.roots()?;
         job.db.execute_batch(
             "PRAGMA synchronous=FULL; BEGIN IMMEDIATE;
-            UPDATE job SET generation=generation+1,state='running'; DELETE FROM directories;",
+            UPDATE job SET generation=generation+1,state='running'; DELETE FROM directories; UPDATE comparison_job SET state='invalidated';",
         )?;
         for root in roots {
             if let Err(e) = job.validate_root(root.id) {
@@ -328,7 +336,7 @@ impl Job {
         } else {
             None
         };
-        self.db.execute("INSERT INTO entries(root,path,kind,size,modified,target,generation) VALUES (?,?,?,?,?,?,(SELECT generation FROM job)) ON CONFLICT(root,path) DO UPDATE SET kind=excluded.kind,size=excluded.size,modified=excluded.modified,target=excluded.target,generation=excluded.generation,excluded=0",params![root,bytes(relative),kind,i64::try_from(meta.len()).map_err(|_| Error::Invalid("file size exceeds supported range".into()))?,modified(&meta),target.as_deref().map(bytes)])?;
+        self.db.execute("INSERT INTO entries(root,path,kind,size,modified,observation,target,generation) VALUES (?,?,?,?,?,?,?,(SELECT generation FROM job)) ON CONFLICT(root,path) DO UPDATE SET kind=excluded.kind,size=excluded.size,modified=excluded.modified,observation=excluded.observation,target=excluded.target,generation=excluded.generation,excluded=0",params![root,bytes(relative),kind,i64::try_from(meta.len()).map_err(|_| Error::Invalid("file size exceeds supported range".into()))?,modified(&meta),directory_stamp(&meta),target.as_deref().map(bytes)])?;
         if meta.is_dir() {
             self.db.execute(
                 "INSERT OR IGNORE INTO directories VALUES (?,?,'pending',?)",
@@ -549,7 +557,7 @@ fn preflight_roots(database: &Path) -> Result<Vec<PathBuf>> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )?;
     let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    if version != 1 {
+    if version != 1 && version != 2 {
         return Err(Error::Invalid(format!(
             "unsupported inventory schema version {version}"
         )));
