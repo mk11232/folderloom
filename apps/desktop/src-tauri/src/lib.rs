@@ -82,22 +82,27 @@ impl Desktop {
     }
     pub fn bootstrap(&self) -> Result<Value> {
         let path = self.inner.data.join("demo.json");
-        let manifest = fs::read(&path)
-            .map_err(err)
-            .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).map_err(err));
+        let manifest = match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice::<Manifest>(&bytes)
+                .map(Some)
+                .map_err(err),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(err(e)),
+        };
         let (manifest, configuration_error) = match manifest {
             Ok(manifest) => (manifest, None),
             Err(message) => (
-                Manifest {
-                    title: "Folderloom".into(),
-                    description: "Select local source folders to inventory and compare.".into(),
-                    roots: vec![],
-                },
+                None,
                 Some(format!(
                     "Demo configuration unavailable: {message}. Choose local folders to begin."
                 )),
             ),
         };
+        let manifest = manifest.unwrap_or_else(|| Manifest {
+            title: "Folderloom".into(),
+            description: "Select local source folders to inventory and compare.".into(),
+            roots: vec![],
+        });
         Ok(
             json!({"manifest":manifest,"manifest_path":display_path(&path),"configuration_error":configuration_error,"snapshot":self.reopen()?}),
         )
