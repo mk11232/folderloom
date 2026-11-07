@@ -17,3 +17,9 @@ The job stages distinguish inventory completion from copy completion. A scan tha
 Inventory, comparisons, decisions and copy checkpoints remain in each job's bundled SQLite database. The desktop host stores setup metadata and a draft in small local files, using atomic replacement. Historical jobs created before the wizard are discovered from existing databases and remain accessible. An unreadable job remains visible with an error rather than silently disappearing.
 
 This adds navigation and setup to the existing [copy-only workflow](consolidation-workflow.md). It does not implement job deletion, source cleanup, automatic folder matching, cross-computer project transfer or malware scanning.
+
+## Archive and restore
+
+The Jobs table separates Current and Archived jobs. Archive and Restore persist locally across app restarts and keep each job database, setup, sources, and destination intact. Archived jobs can still be opened for review. Archive and Restore are unavailable while a filesystem operation is running. Older jobs without archive state remain Current.
+
+Archived jobs also offer Delete permanently. The confirmation names the job and explains the loss of saved scans, comparisons, plans, and results. Deletion removes only that job’s local SQLite database, SQLite sidecars, setup metadata, and archive marker. Source and destination files, other jobs, and the setup draft are retained. A running operation blocks deletion; deleting the selected job clears the saved selection.

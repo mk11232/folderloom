@@ -30,3 +30,13 @@ Installed executable SHA-256: `5d70e0e1187d2d3d0f3a8e39acd273ad49146940c802ffef8
 ## Validation limits
 
 This is a local, ad-hoc signed macOS development build. CI also checks Linux. Mounted-NAS compatibility, Windows, automatic folder matching, source cleanup and malware scanning remain outside this build. Job metadata and drafts stay local; private samples and screenshots are excluded from the repository.
+
+## Archive, restore, and permanent deletion — November 7, 2026
+
+- 13 focused desktop job tests and 27 frontend tests passed. TypeScript, the production frontend build, desktop Clippy with warnings denied, and formatting passed.
+- Job tests cover archive/restore across restart; deletion restricted to archived jobs; selected-job reset; preservation of other jobs, drafts, source bytes and copied output; invalid IDs; linked companion rejection; and both the active worker gate and an external engine writer lock.
+- Built and installed the standalone macOS app, then verified its ad-hoc signature. In the native UI, archived an existing sample job, quit/reopened, restored it, quit/reopened again, and confirmed all three original jobs were Current. Inspected the final compact Open/archive/restore/delete controls and the named deletion confirmation. Keep job cancelled the confirmation and retained the job; the sample was restored afterward.
+- Permanent deletion was exercised against temporary synthetic jobs in backend tests. No existing user job was permanently deleted through the native UI.
+- Installed executable SHA-256: `f3c73aef1cc7c1437548f38289653416492da4b7425273cef73f509a3f72cf40`.
+
+Kimi K3 High independently reviewed archive/restore and permanent deletion and reported no blocking issues. Its frontend tests and typecheck passed; its Rust adapter tests passed with the 26.5 SDK and default desktop features disabled. The full native build and installed-app checks above were performed separately with desktop features enabled.

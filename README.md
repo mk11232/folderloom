@@ -10,7 +10,7 @@ The graphical app scans, compares, saves folder mappings and merge decisions, an
 
 ## Start or reopen a job
 
-Folderloom opens to **Jobs**, a table of saved scans and consolidation jobs. Open a row to resume its saved stage, or choose **New job**. No account or login is required.
+Folderloom opens to **Jobs**, a table of saved scans and consolidation jobs. Open a row to resume its saved stage, or choose **New job**. No account or login is required. Choose **Archive** to move a finished job out of Current; use **Archived → Restore** to bring it back. Archiving retains its saved history, source files, and destination files. Archived jobs offer **Delete permanently** to free their local database space after confirmation; this deletes saved job records only, never source folders or copied files.
 
 1. **Sources:** name the job and add its source folders. **Remove** only removes a folder from this setup; it never deletes files. Unstarted setup is saved locally as a draft.
 2. **Primary destination:** choose an existing folder, empty or populated, or use a listed folder as primary. Its contents stay in place. The primary is excluded from incoming sources.

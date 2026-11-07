@@ -123,6 +123,7 @@ pub struct JobSummary {
     pub destination: Option<String>,
     pub error: Option<String>,
     pub active: bool,
+    pub archived: bool,
 }
 #[derive(Serialize, Deserialize)]
 struct JobMetadata {
@@ -182,6 +183,91 @@ impl Desktop {
         }
         rows.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms).then(b.id.cmp(&a.id)));
         Ok(rows)
+    }
+    pub fn set_job_archived(&self, job_id: String, archived: bool) -> Result<()> {
+        let cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err(
+                "Wait for the current operation to finish before archiving or restoring a job."
+                    .into(),
+            );
+        }
+        existing_database(&self.inner.data, &job_id)?;
+        atomic_write(
+            &self
+                .inner
+                .data
+                .join("jobs")
+                .join(format!("{job_id}.archive.json")),
+            &serde_json::to_vec(&archived).map_err(err)?,
+        )
+    }
+    /// Delete only this job's local records. Never traverse source or destination paths.
+    pub fn delete_job(&self, job_id: String) -> Result<Value> {
+        let mut cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err("Wait for the current operation to finish before deleting a job.".into());
+        }
+        let database = existing_database(&self.inner.data, &job_id)?;
+        let jobs = self.inner.data.join("jobs");
+        let archive = jobs.join(format!("{job_id}.archive.json"));
+        if read_json::<bool>(&archive)? != Some(true) {
+            return Err("Archive the job before deleting it permanently.".into());
+        }
+        let companions: Vec<_> = [
+            "sqlite-journal",
+            "sqlite-wal",
+            "sqlite-shm",
+            "json",
+            "sqlite.lock",
+        ]
+        .iter()
+        .map(|suffix| jobs.join(format!("{job_id}.{suffix}")))
+        .collect();
+        // Validate every existing record before removing any of them.
+        for path in &companions {
+            match fs::symlink_metadata(path) {
+                Ok(meta) if meta.is_file() && meta.nlink() == 1 => {}
+                Ok(_) => {
+                    return Err("Job records must be regular files without link aliases.".into());
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(err(e)),
+            }
+        }
+        let lock_path = jobs.join(format!("{job_id}.sqlite.lock"));
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(err)?;
+        fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| {
+            "This job is in use by another process. Close it before deleting.".to_string()
+        })?;
+        if cached.control.job_id.as_deref() == Some(&job_id) {
+            match fs::remove_file(self.inner.data.join("current-job")) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(err(e)),
+            }
+            *cached = empty_snapshot();
+        }
+        for path in companions.iter().filter(|path| **path != lock_path) {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(err(e)),
+            }
+        }
+        fs::remove_file(database).map_err(err)?;
+        fs::remove_file(lock_path).map_err(err)?;
+        fs::remove_file(archive).map_err(err)?;
+        fs::File::open(jobs)
+            .and_then(|dir| dir.sync_all())
+            .map_err(err)?;
+        cached.payload()
     }
     pub fn open_job(&self, job_id: String) -> Result<Value> {
         let mut cached = self.inner.snapshot.lock().map_err(err)?;
@@ -754,7 +840,12 @@ fn job_summary(data: &Path, id: &str, active: bool) -> JobSummary {
         destination: None,
         error: None,
         active,
+        archived: false,
     };
+    match read_json::<bool>(&data.join("jobs").join(format!("{id}.archive.json"))) {
+        Ok(value) => row.archived = value.unwrap_or(false),
+        Err(message) => row.error = Some(format!("Archive status could not be read: {message}")),
+    }
     match read_json::<JobMetadata>(&metadata_path(data, id)) {
         Ok(Some(metadata)) => {
             row.name = metadata.setup.name;
@@ -980,6 +1071,24 @@ mod shell {
             .map_err(err)?
     }
     #[tauri::command]
+    async fn desktop_set_job_archived(
+        app: tauri::State<'_, Desktop>,
+        job_id: String,
+        archived: bool,
+    ) -> Result<()> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.set_job_archived(job_id, archived))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_delete_job(app: tauri::State<'_, Desktop>, job_id: String) -> Result<Value> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.delete_job(job_id))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
     async fn desktop_open_job(app: tauri::State<'_, Desktop>, job_id: String) -> Result<Value> {
         let app = app.inner().clone();
         tauri::async_runtime::spawn_blocking(move || app.open_job(job_id))
@@ -1087,6 +1196,8 @@ mod shell {
             .invoke_handler(tauri::generate_handler![
                 desktop_bootstrap,
                 desktop_jobs,
+                desktop_set_job_archived,
+                desktop_delete_job,
                 desktop_open_job,
                 desktop_create_job,
                 desktop_save_draft,

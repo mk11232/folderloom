@@ -88,3 +88,10 @@ test("home allows returning to a worker while preventing switching to another jo
   assert.match(html, /aria-label="Open Other job" disabled=""/);
   assert.doesNotMatch(html, /aria-label="Open Family collection" disabled=""/);
 });
+
+test("home hides archived jobs by default and offers archive navigation", () => {
+  const html = renderToStaticMarkup(createElement(JobsHome, { jobs: [summary, { ...summary, id: "b", name: "Retired collection", archived: true }], loading: false, busy: false, workingJob: null, error: null, hasDraft: false }));
+  assert.match(html, /Archive Family collection/);
+  assert.match(html, /Archived \(1\)/);
+  assert.doesNotMatch(html, /Retired collection/);
+});
