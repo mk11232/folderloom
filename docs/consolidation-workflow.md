@@ -4,7 +4,7 @@ This workflow extends inventory and comparison into a saved, copy-only merge pla
 
 ## Review flow
 
-1. Add local or mounted source folders and scan them. Existing comparison and inline matching-location views remain available.
+1. Start at Jobs and open a saved job, or choose New job. Name the job and add/remove local or mounted source folder selections. Then choose the primary destination and start the scan. Existing comparison and inline matching-location views remain available.
 2. Use the always-visible Primary destination card to choose an existing directory (empty or populated), or select one of the listed source folders as primary. Select the source folders or subfolders to contribute. The destination cannot overlap an incoming selected folder. A scanned primary can be left unselected as an input.
 3. Map each selected folder to a relative folder inside the primary. An empty target means the primary itself. The selected source folder defines the boundary: wrapper folders above it are omitted. Use a separate target folder to preserve a collection's internal layout.
 4. Build the saved merge plan. Review exact output paths, matched contributions, already-present files, additions, generated conflict names, and blocked entries. Exclude individual plan items or edit mappings and rebuild. Every changed plan revokes prior approval.

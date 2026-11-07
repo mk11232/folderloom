@@ -46,7 +46,7 @@ export function Consolidation({ snapshot, sources, onDestinationChange, busy, st
   const plan = snapshot?.plan;
   const roots = snapshot?.roots ?? [];
   const folders = snapshot?.entries.filter(entry => entry.entry_type === "directory") ?? [];
-  const [destination, setDestination] = useState("");
+  const [destination, setDestination] = useState(plan?.destination_input ?? snapshot?.setup?.destination ?? "");
   const [mappings, setMappings] = useState<DraftMapping[] | null>(null);
   const [dirty, setDirty] = useState(false);
   const [choosing, setChoosing] = useState(false);
@@ -64,9 +64,10 @@ export function Consolidation({ snapshot, sources, onDestinationChange, busy, st
   // change the revision, so they must not discard edits to the next mapping draft.
   useEffect(() => {
     // Choosing the primary comes before scanning; starting a job retains it.
-    if (plan) { setDestination(plan.destination_input ?? ""); onDestinationChange(plan.destination_input ?? ""); }
+    const savedDestination = plan ? plan.destination_input ?? "" : snapshot?.setup?.destination ?? "";
+    setDestination(savedDestination); onDestinationChange(savedDestination);
     setMappings(plan ? plan.mappings.map(mapping => ({ source_key: mapping.source_key, destination_relative: mapping.destination_input ?? "", selected: mapping.destination_input !== null })) : null);
-    setDirty(!plan && Boolean(destination)); setConsent(false);
+    setDirty(false); setConsent(false);
   }, [snapshot?.job_id, plan?.id]);
   useEffect(() => { setConsent(false); }, [plan?.revision]);
   const candidates = excludePrimaryMappings(mappings ?? folders.filter(entry => entry.parent_key === null).map(entry => ({ source_key: entry.key, destination_relative: "", selected: false })), folders, roots, destination);
