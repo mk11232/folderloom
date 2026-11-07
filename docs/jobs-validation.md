@@ -54,3 +54,5 @@ Installed executable SHA-256: `b7097194899e1497536cc41d505d9274ba088c636456c53a1
 Installed and visually checked the red-at-rest Delete control and the Restore/Delete explanation popovers using keyboard focus in the native app. Popovers also open on hover and render outside the scrolling table to avoid clipping. The permanent-delete popover and confirmation explicitly say the deleted job cannot be recovered, while source folders and copied files stay untouched. The final installed app exposes the requested Open job label. All 29 frontend tests and the full native bundle build passed; signature verification passed.
 
 Latest installed executable SHA-256: `2ede7f47b392e18472a67c8ece37ba886b106e0f99e11e422f0822e8e90e442b`.
+
+Open job now uses the same immediate hover/focus popover as Archive and Delete, replacing the native HTML title tooltip. The 29 frontend tests and full macOS bundle build passed. Native verification of this follow-up was blocked by the computer-control connection failing to start.
