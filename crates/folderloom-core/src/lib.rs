@@ -1,8 +1,10 @@
-//! Durable inventory and comparison jobs. No source mutation operations are exposed.
+//! Durable inventory, comparison, and reviewed copy-only consolidation jobs.
 mod compare;
+mod consolidate;
 pub use compare::{
     Comparison, ComparisonProgress, ComparisonRootFailure, ComparisonStage, ComparisonState,
 };
+pub use consolidate::{ConsolidationPlan, Mapping, PlanContributor, PlanDecision, PlanItem};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::os::unix::{
     ffi::{OsStrExt, OsStringExt},

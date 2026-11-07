@@ -831,7 +831,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "folderloom-cli"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "folderloom-core",
  "tempfile",
@@ -839,19 +839,21 @@ dependencies = [
 
 [[package]]
 name = "folderloom-core"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "blake3",
  "fs2",
  "libc",
  "rusqlite",
+ "serde",
  "tempfile",
  "thiserror 2.0.21",
+ "unicode-normalization",
 ]
 
 [[package]]
 name = "folderloom-desktop"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "folderloom-core",
  "rusqlite",
@@ -3829,6 +3831,15 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-segmentation"

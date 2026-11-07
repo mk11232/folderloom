@@ -1,6 +1,6 @@
 {
-  "cargo_lock_sha256": "b0921130d5e32b28e1ecbe7376fe86586ff81947659fb0d735b6a832c352a741",
-  "npm_lock_sha256": "9382706647a8afd5ecd08154931d4212faa9006ff38ebd9d11558715181428ba",
+  "cargo_lock_sha256": "09988db62fc90f466dc78c6b1f1989b69c8aab21b3bfbd12545646a694f3ab9f",
+  "npm_lock_sha256": "3bdf7531e44802787d55f7ed637f351132e55b6b559c8852474bdbf87cc256ed",
   "packages": [
     {
       "authors": [
@@ -4706,6 +4706,36 @@
       ],
       "source": "https://crates.io/api/v1/crates/unicode-ident/1.0.27/download",
       "version": "1.0.27"
+    },
+    {
+      "authors": [
+        "kwantam <kwantam@gmail.com>",
+        "Manish Goregaokar <manishsmail@gmail.com>"
+      ],
+      "checksum": "75cd3fb03d5288b3ba9a1ee103ac7e9cbb59f0b03d64f8ddfcc04dd42758a85d",
+      "ecosystem": "cargo",
+      "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "name": "unicode-normalization",
+      "notices": [
+        {
+          "source": "COPYRIGHT",
+          "text": "23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d"
+        },
+        {
+          "source": "LICENSE-APACHE",
+          "text": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "source": "LICENSE-MIT",
+          "text": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"
+        },
+        {
+          "source": "LICENSE-UNICODE",
+          "text": "f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1"
+        }
+      ],
+      "source": "https://crates.io/api/v1/crates/unicode-normalization/0.1.26/download",
+      "version": "0.1.26"
     },
     {
       "authors": [

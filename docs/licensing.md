@@ -31,7 +31,7 @@ Some published crates omit standalone license files. Their supplemental notices 
 
 ## Custom icon and fonts
 
-The woven-folder application icon is custom AI-generated artwork made for Folderloom from the requested concept: loose strands woven through a loom into a completed folder. It is distinct from the Lucide interface glyphs. The source image and PNG/ICNS derivatives are recorded in [`apps/desktop/src/assets/README.md`](../apps/desktop/src/assets/README.md). No third-party reference image or private source file was supplied for that generation. This provenance record does not guarantee exclusive rights, copyright protection, or absence of similarity to other artwork.
+The application icon is the user's selected artwork: three folders with matching document symbols flowing into a teal destination. The supplied image and native derivatives are recorded in [`apps/desktop/src/assets/README.md`](../apps/desktop/src/assets/README.md). It is separate from Lucide's interface glyphs. Earlier design concepts were AI-generated; the supplied revision's external generation history has not been independently verified. This provenance record does not guarantee exclusive rights or copyright protection.
 
 The interface uses CSS system-font fallbacks. No font files are redistributed. Font availability and rendering depend on the user's operating system.
 

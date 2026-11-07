@@ -292,7 +292,7 @@ impl Job {
             Error::Invalid("inventory predates file identity evidence; rescan required".into())
         })
     }
-    fn check_file(&self, r: &Comparison, file: &fs::File) -> Result<()> {
+    pub(super) fn check_file(&self, r: &Comparison, file: &fs::File) -> Result<()> {
         let meta = file.metadata()?;
         if !meta.is_file()
             || meta.len() != r.size
@@ -324,7 +324,7 @@ impl Job {
         }
         Ok(dir)
     }
-    fn open_observed(&self, r: &Comparison) -> Result<fs::File> {
+    pub(super) fn open_observed(&self, r: &Comparison) -> Result<fs::File> {
         self.expected_observation(r)?;
         let mut dir = self.open_comparison_root(r.root_id)?;
         let parts: Vec<_> = r.relative_path.components().collect();
