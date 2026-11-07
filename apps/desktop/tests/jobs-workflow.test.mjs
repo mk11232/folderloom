@@ -23,7 +23,7 @@ const summary = { id: "a", name: "Family collection", created_ms: 1000, updated_
 
 test("home table exposes saved jobs and distinguishes inventory from copied results", () => {
   const html = renderToStaticMarkup(createElement(JobsHome, { jobs: [summary, { ...summary, id: "b", name: "Finished archive", stage: "results" }], loading: false, busy: false, workingJob: null, error: null, hasDraft: true, onNew() {}, onDraft() {}, onOpen() {}, onRefresh() {} }));
-  for (const text of ["Saved jobs", "Family collection", "Inventory ready", "Copy results ready", "Continue setup", "Discard setup", "New job", "Open Family collection", "/synthetic/Primary"]) assert.ok(html.includes(text), text);
+  for (const text of ["Saved jobs", "Family collection", "Inventory ready", "Copy results ready", "Continue setup", "Discard setup", "New job", "Open job Family collection", "/synthetic/Primary"]) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /Sign in|Log in|Scan selected folders/);
 });
 
@@ -85,8 +85,8 @@ test("comparison pauses and stale plans cannot look like completed copying", () 
 test("home allows returning to a worker while preventing switching to another job", () => {
   const html = renderToStaticMarkup(createElement(JobsHome, { jobs: [{ ...summary, active: true }, { ...summary, id: "b", name: "Other job" }], loading: false, busy: false, workingJob: "a", error: null, hasDraft: false, onNew() {}, onDraft() {}, onOpen() {}, onRefresh() {} }));
   assert.match(html, /Return to working job/);
-  assert.match(html, /aria-label="Open Other job" disabled=""/);
-  assert.doesNotMatch(html, /aria-label="Open Family collection" disabled=""/);
+  assert.match(html, /aria-label="Open job Other job"[^>]* disabled=""/);
+  assert.doesNotMatch(html, /aria-label="Open job Family collection"[^>]* disabled=""/);
 });
 
 test("home hides archived jobs by default and offers archive navigation", () => {

@@ -48,3 +48,9 @@ Reproduced the missing action column in the installed app at the previous 960 ×
 The two new cancellation serialization tests failed before implementation and passed afterward. All 29 frontend tests and 14 desktop job tests pass, including cancellation across restart, empty-draft suppression, preservation of started jobs and source bytes, and the active-worker gate. TypeScript, native bundle, signature verification, and desktop Clippy passed. Kimi K3 High’s text-only cancellation review found no blocking issues. Cancellation persistence was verified through the real backend tests, not claimed as a completed native cancel/restart exercise.
 
 Installed executable SHA-256: `b7097194899e1497536cc41d505d9274ba088c636456c53a1f4222dbced2a1cf`.
+
+## Action labels and warnings
+
+Installed and visually checked the red-at-rest Delete control and the Restore/Delete explanation popovers using keyboard focus in the native app. Popovers also open on hover and render outside the scrolling table to avoid clipping. The permanent-delete popover and confirmation explicitly say the deleted job cannot be recovered, while source folders and copied files stay untouched. The final installed app exposes the requested Open job label. All 29 frontend tests and the full native bundle build passed; signature verification passed.
+
+Latest installed executable SHA-256: `2ede7f47b392e18472a67c8ece37ba886b106e0f99e11e422f0822e8e90e442b`.

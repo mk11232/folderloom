@@ -27,15 +27,16 @@ main{min-width:0;display:flex;flex-direction:column;overflow:hidden}.toolbar{dis
 .jobs-list th:first-child { width: 18%; }
 .jobs-list th:nth-child(2) { width: 16%; }
 .jobs-list th:nth-child(3), .jobs-list th:nth-child(4) { width: 5%; }
-.jobs-list th:nth-child(5) { width: 22%; }
+.jobs-list th:nth-child(5) { width: 19%; }
 .jobs-list th:nth-child(6) { width: 16%; }
-.jobs-list th:nth-child(7) { width: 18%; }
+.jobs-list th:nth-child(7) { width: 21%; }
 .job-actions { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
 .jobs-list .job-actions button { flex-shrink: 0; min-height: 32px; }
 .jobs-list .job-open { color: #086c68; border-color: #b8d9d2; background: #f2faf7; gap: 6px; }
 .jobs-list .job-icon-action { width: 30px; padding: 5px; background: transparent; border-color: transparent; color: #6d8077; }
 .jobs-list .job-icon-action:hover:not(:disabled) { background: #eaf1eb; color: #23564a; }
-.jobs-list .job-delete:hover:not(:disabled) { background: #fbebe7; color: #a13828; }
+.jobs-list .job-delete { color: #b33125; background: #fff0ec; border-color: #e9b5aa; }
+.jobs-list .job-delete:hover:not(:disabled) { background: #f9dcd5; border-color: #cb7767; color: #922619; }
 .delete-job-dialog { width: min(460px, calc(100vw - 48px)); margin: auto; border: 1px solid #dfe6d7; border-radius: 14px; padding: 28px; background: #fffefa; color: #345247; box-shadow: 0 20px 70px #1f392533; }
 .delete-job-dialog::backdrop { background: #142e2855; }
 .delete-job-symbol { color: #a13828; margin-bottom: 16px; }
@@ -74,3 +75,6 @@ main{min-width:0;display:flex;flex-direction:column;overflow:hidden}.toolbar{dis
   .setup-exit-actions { flex-wrap: wrap; }
   .wizard-external-error { left: 18px; }
 }
+
+.job-action-tooltip { position: fixed; z-index: 1000; width: 260px; padding: 11px 13px; border-radius: 7px; background: #273e35; color: #fffefa; box-shadow: 0 5px 18px #18332833; font-size: 12px; line-height: 1.55; pointer-events: none; }
+.job-action-tooltip.destructive-tooltip { background: #842e23; }
