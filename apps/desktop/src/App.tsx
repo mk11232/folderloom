@@ -1,15 +1,17 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
-import { AlertCircle, Check, ChevronRight, File, Folder, FolderPlus, Layers, Link, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, Check, ChevronRight, File, Folder, Layers, Link, LoaderCircle, Pause, Play, RefreshCw, Search, ShieldCheck, X } from "lucide-react";
 import { api } from "./api";
 import folderloomIcon from "./assets/folderloom.png";
-import type { Bootstrap, Comparison, Entry, Snapshot, Source } from "./api";
+import type { Bootstrap, Comparison, Entry, Snapshot, Source, JobSetup, JobSummary } from "./api";
 import { ancestors, buildInventoryTree, entryName, inventoryRows, latestComparisons, matchingContext } from "./inventory-tree";
 import type { InventoryNode } from "./inventory-tree";
 import { fullHashLocations } from "./matching-locations";
 import { MatchingLocationList } from "./MatchingLocationList";
-import { Consolidation, folderName, pathsOverlap } from "./Consolidation";
+import { Consolidation, folderName } from "./Consolidation";
 import type { WorkspaceStep } from "./Consolidation";
+import { JobsHome } from "./JobsHome";
+import { JobWizard } from "./JobWizard";
+import { emptySetup, resumeStep } from "./job-workflow";
 
 const stageLabels: Record<string, string> = {
   pending_sample: "Awaiting sample", sampling: "Reading sample", sampled: "Sample candidate",
@@ -35,10 +37,16 @@ function stage(entry: Entry, comparison?: Comparison) {
 export default function App() {
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [screen, setScreen] = useState<"home" | "setup" | "job">("home");
+  const [jobs, setJobs] = useState<JobSummary[]>([]);
+  const [draft, setDraft] = useState<JobSetup | null>(null);
+  const [wizardSetup, setWizardSetup] = useState<JobSetup>(emptySetup);
+  const [wizardKey, setWizardKey] = useState(0);
+  const sources: Source[] = useMemo(() => snapshot?.setup?.sources.map(source => ({ ...source, input_path: source.path })) ?? snapshot?.roots.map(root => ({ label: folderName(root.path), path: root.path, input_path: root.input_path })) ?? [], [snapshot?.setup, snapshot?.roots]);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [homeError, setHomeError] = useState<string | null>(null);
+  const catalogVersion = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -46,11 +54,7 @@ export default function App() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showGaps, setShowGaps] = useState(false);
   const [primaryDestination, setPrimaryDestination] = useState("");
-  const primaryRef = useRef("");
-  const selectPrimary = useCallback((path: string) => {
-    primaryRef.current = path; setPrimaryDestination(path);
-    setChosen(previous => previous.filter(source => !pathsOverlap(source, path)));
-  }, []);
+  const selectPrimary = useCallback((path: string) => setPrimaryDestination(path), []);
   const [step, setStep] = useState<WorkspaceStep>("inventory");
   const [openMatches, setOpenMatches] = useState<Set<string>>(() => new Set());
   const [expansion, setExpansion] = useState<Map<string, boolean>>(() => new Map());
@@ -64,12 +68,17 @@ export default function App() {
     const version = ++requestVersion.current;
     setLoading(true); setError(null);
     try {
-      const result = await api.bootstrap();
+      const results = await Promise.allSettled([api.bootstrap(), api.jobs(), api.draft()]);
       if (version !== requestVersion.current) return;
-      setBootstrap(result); setSnapshot(result.snapshot);
-      const allSources = [...result.manifest.roots];
-      for (const root of result.snapshot.roots) if (!allSources.some(source => root.input_path !== null ? sourceInput(source) === root.input_path : source.input_path === null && source.path === root.path)) allSources.push({ path: root.path, input_path: root.input_path, label: folderName(root.path) });
-      setSources(allSources); setChosen(allSources.map(sourceInput).filter((path): path is string => path !== null && !pathsOverlap(path, primaryRef.current)));
+      const [boot, catalog, savedDraft] = results;
+      if (boot.status === "fulfilled") {
+        setBootstrap(boot.value); setSnapshot(boot.value.snapshot);
+        setPrimaryDestination(boot.value.snapshot.plan?.destination_input ?? boot.value.snapshot.setup?.destination ?? "");
+      }
+      if (catalog.status === "fulfilled") setJobs(catalog.value);
+      if (savedDraft.status === "fulfilled") setDraft(savedDraft.value);
+      const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${["Saved workspace", "Job list", "Unfinished setup"][index]}: ${message(result.reason)}`] : []);
+      setHomeError(failures.length ? failures.join(" · ") : null);
       setSelectedKey(null); setRootFilter(null);
     } catch (e) { if (version === requestVersion.current) setError(message(e)); }
     finally { if (version === requestVersion.current) setLoading(false); }
@@ -96,22 +105,61 @@ export default function App() {
   }, [snapshot?.worker, busy]);
 
   async function act(action: () => Promise<Snapshot>) {
+    catalogVersion.current++;
     requestVersion.current++; setBusy(true); setError(null);
     try { setSnapshot(await action()); return true; }
     catch (e) { setError(message(e)); return false; }
     finally { setBusy(false); }
   }
-  async function addFolder() {
+  function resetJobView(next: Snapshot) {
+    setSnapshot(next); setSelectedKey(null); setRootFilter(null); setQuery(""); setFilter("all");
+    setRevealKey(null); setShowGaps(false); setOpenMatches(new Set()); setExpansion(new Map()); setFilteredCollapsed(new Set());
+    setPrimaryDestination(next.plan?.destination_input ?? next.setup?.destination ?? "");
+    setStep(resumeStep(next)); setScreen("job");
+  }
+  async function refreshJobs() {
+    const version = ++catalogVersion.current;
+    setLoading(true); setHomeError(null);
+    const results = await Promise.allSettled([api.jobs(), api.draft()]);
+    if (version !== catalogVersion.current) return;
+    const [catalog, savedDraft] = results;
+    if (catalog.status === "fulfilled") setJobs(catalog.value);
+    if (savedDraft.status === "fulfilled") setDraft(savedDraft.value);
+    else setDraft(null);
+    const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${index ? "Unfinished setup" : "Job list"}: ${message(result.reason)}`] : []);
+    setHomeError(failures.length ? failures.join(" · ") : null); setLoading(false);
+  }
+  async function showHome() { setScreen("home"); await refreshJobs(); }
+  async function openJob(id: string) {
+    catalogVersion.current++; setLoading(false); setHomeError(null);
+    if (snapshot?.worker) { if (snapshot.job_id === id) { setScreen("job"); return; } setError("Pause or finish the working job before opening another one."); return; }
+    const version = ++requestVersion.current; setBusy(true); setError(null);
+    try { const next = await api.openJob(id); if (version === requestVersion.current) resetJobView(next); }
+    catch (failure) { setError(message(failure)); }
+    finally { if (version === requestVersion.current) setBusy(false); }
+  }
+  async function beginSetup(setup: JobSetup) {
+    requestVersion.current++; catalogVersion.current++; setLoading(false); setHomeError(null);
+    if (snapshot?.worker) return;
     setBusy(true); setError(null);
-    try {
-      const path = await open({ directory: true, multiple: false, title: "Choose a source folder" });
-      if (typeof path === "string") {
-        if (!sources.some(source => source.path === path)) setSources(previous => [...previous, { path, label: folderName(path) }]);
-        setChosen(previous => previous.includes(path) || pathsOverlap(path, primaryRef.current) ? previous : [...previous, path]);
-      }
-    } catch (e) { setError(message(e)); }
+    try { await api.saveDraft(setup); setDraft(setup); setWizardSetup(setup); setWizardKey(key => key + 1); setScreen("setup"); }
+    catch (failure) { setError(message(failure)); }
     finally { setBusy(false); }
   }
+  async function cloneJob() {
+    if (snapshot?.worker) return;
+    if (!snapshot?.setup && snapshot?.roots.some(root => root.input_path === null)) { setError("This job contains paths that cannot be reused as text. Start a new job and choose its source folders directly."); return; }
+    const setup = snapshot?.setup ?? { name: "Folder collection", sources: sources.map(source => ({ label: source.label, path: sourceInput(source)! })), destination: primaryDestination };
+    await beginSetup({ ...setup, name: `${setup.name} — new job`, sources: setup.sources.map(source => ({ ...source })), destination: snapshot?.plan?.destination_input ?? setup.destination });
+  }
+  async function createJob(setup: JobSetup) {
+    catalogVersion.current++; setLoading(false); setHomeError(null);
+    const version = ++requestVersion.current; setBusy(true); setError(null);
+    try { const next = await api.createJob(setup); if (version !== requestVersion.current) return false; resetJobView(next); setStep("inventory"); setDraft(null); return true; }
+    catch (failure) { setError(message(failure)); return false; }
+    finally { if (version === requestVersion.current) setBusy(false); }
+  }
+  useEffect(() => { if (screen === "home" && !snapshot?.worker && !loading) void refreshJobs(); }, [screen, snapshot?.worker]);
   const active = Boolean(snapshot?.worker);
   const blocked = active || busy || loading;
   const inventory = snapshot?.inventory_progress;
@@ -172,37 +220,28 @@ export default function App() {
   const savedPlanState = snapshot?.plan ? ({ proposed: "Merge plan ready for review", approved: "Merge plan approved", running: "Copy interrupted — resume in Results", paused: "Copy paused", complete: "Copy results ready", finished_with_errors: "Copy results need review" }[snapshot.plan.state]) : null;
   const currentState = active ? (snapshot?.pause_requested ? "Saving pause…" : snapshot?.worker === "scan" ? "Reading folder inventory" : snapshot?.worker === "plan" ? "Building merge plan" : snapshot?.worker === "execute" ? "Copying approved additions" : "Comparing file contents") : recoveryRequired ? "Saved job needs recovery" : savedPlanState ?? (resumeComparison ? "Comparison interrupted or paused" : resumeInventory ? "Inventory interrupted or paused" : comparison && comparison.state !== "not_started" ? stateLabel(comparison.state) : inventory ? stateLabel(inventory.state) : "Ready to scan");
 
+  if (screen !== "job") return <div className="app-shell jobs-shell"><aside className="sidebar"><div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong></div><p className="sidebar-hint">Local jobs. Saved progress. Sources stay intact.</p><div className="local-note"><ShieldCheck size={17} /><span>On your computer<small>No account needed.</small></span></div></aside>{screen === "home" ? <JobsHome jobs={jobs} loading={loading} busy={busy} workingJob={snapshot?.worker ? snapshot.job_id : jobs.find(job => job.active)?.id ?? null} error={homeError || error} hasDraft={Boolean(draft)} onNew={() => void beginSetup(emptySetup())} onDraft={() => { if (draft) void beginSetup(draft); }} onOpen={id => void openJob(id)} onRefresh={() => void refreshJobs()} /> : <><JobWizard key={wizardKey} initial={wizardSetup} busy={busy} onCancel={() => void showHome()} onStart={createJob} />{error && <div className="wizard-external-error alert error" role="alert">{error}</div>}</>}</div>;
+
   return <div className="app-shell">
-    <aside className="sidebar" aria-label="Sources and saved job">
-      <div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong><span className="demo-label">LOCAL</span></div>
-      <div className="sidebar-heading">SOURCE FOLDERS <span>{sources.length}</span></div>
-      <div className="sources">
-        {sources.map(source => { const inputPath = sourceInput(source); const isPrimary = inputPath !== null && pathsOverlap(inputPath, primaryDestination); return <label className={`source ${chosen.includes(inputPath ?? "") ? "chosen" : ""}`} key={source.path}>
-          <input type="checkbox" checked={chosen.includes(inputPath ?? "")} disabled={blocked || inputPath === null || isPrimary} onChange={e => { if (inputPath !== null) setChosen(previous => e.target.checked ? [...previous, inputPath] : previous.filter(path => path !== inputPath)); }} />
-          <Folder size={17} /><span><strong>{source.label}{isPrimary && <em className="primary-source-label">Primary area</em>}</strong><small title={source.path}>{source.path}</small></span>
-        </label>; })}
-        {!sources.length && <p className="sidebar-empty">Choose the folders you want to inspect. Their contents stay in place.</p>}
-      </div>
-      <button className="add-source" disabled={blocked} onClick={() => void addFolder()}><FolderPlus size={15} /> Add folder</button>
-      <button className="new-scan" disabled={blocked || !chosen.length} onClick={() => { setSelectedKey(null); setRootFilter(null); setStep("inventory"); void act(() => api.start(chosen)); }}><Play size={14} /> Scan selected folders <span>{chosen.length}</span></button>
-      <p className="sidebar-hint">Starts a new saved job. Previous job files are retained locally.</p>
-      <div className="saved-job">
-        <div className="sidebar-heading">CURRENT SAVED JOB</div>
-        {snapshot?.job_id ? <><div className="job-line"><span className={`status-dot ${active ? "working" : ""}`} />{currentState}</div><code className="job-id" title={snapshot.job_id}>{snapshot.job_id}</code><p>{roots.length} source folders · Generation {inventory?.generation ?? "—"}</p></> : <p>No saved job yet.</p>}
-        <button disabled={blocked} onClick={() => void load()}><RotateCcw size={14} /> Reopen saved job</button>
-      </div>
+    <aside className="sidebar" aria-label="Job sources and saved progress">
+      <div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong></div>
+      <button className="back-to-jobs" disabled={busy} onClick={() => void showHome()}>← All jobs</button>
+      <div className="sidebar-heading">SAVED SOURCE FOLDERS <span>{roots.length}</span></div>
+      <div className="sources">{roots.map(root => <div className="source" key={root.id}><Folder size={17} /><span><strong>{rootName(root.id)}</strong><small title={root.path}>{root.path}</small></span></div>)}</div>
+      <p className="sidebar-hint">Sources are fixed for this saved job. To add or remove folders, use its setup for a new job.</p>
+      <button disabled={blocked} onClick={() => void cloneJob()}>Use as new job</button>
+      <div className="saved-job"><div className="sidebar-heading">CURRENT JOB</div><div className="job-line"><span className={`status-dot ${active ? "working" : ""}`} />{currentState}</div><p>{snapshot?.setup?.name || "Saved folder job"}</p><code className="job-id" title={snapshot?.job_id ?? ""}>{snapshot?.job_id}</code><p>{roots.length} source folders · Generation {inventory?.generation ?? "—"}</p></div>
       <div className="local-note"><ShieldCheck size={16} /><span>Your sources stay intact<small>Copy only reviewed additions to your destination.</small></span></div>
     </aside>
 
     <main>
-      <header className="toolbar"><div><div className="eyebrow">WORKSPACE</div><h1>{bootstrap?.manifest.title || "Bring your folders together"}</h1></div><div className="toolbar-actions">
+      <header className="toolbar"><div><div className="eyebrow">WORKSPACE</div><h1>{snapshot?.setup?.name || "Saved folder job"}</h1></div><div className="toolbar-actions">
         {step === "inventory" && <><button disabled={blocked || !snapshot?.job_id} onClick={() => void act(() => api.run("scan"))}>{resumeInventory || recoveryRequired ? <Play size={15} /> : <RefreshCw size={15} />}{recoveryRequired ? "Recover / Resume" : resumeInventory ? "Resume scan" : "Re-scan"}</button>
         <button className="primary" disabled={blocked || !inventoryFinished} onClick={() => void act(() => api.run("compare"))}><Layers size={15} />{resumeComparison ? "Resume comparison" : "Compare contents"}</button></>}
         {active && snapshot?.worker !== "plan" && <button disabled={busy || snapshot?.pause_requested} onClick={() => void act(api.pause)}><Pause size={15} />{snapshot?.pause_requested ? "Pausing…" : "Pause"}</button>}
       </div></header>
-      <nav className="workspace-steps" aria-label="Consolidation steps">{(["inventory", "plan", "results"] as const).map((item, index) => <button key={item} aria-current={step === item ? "step" : undefined} onClick={() => setStep(item)}><span>{index + 1}</span>{item === "inventory" ? "Inventory" : item === "plan" ? "Merge plan" : "Results"}{item === "plan" && snapshot?.plan && <small>Revision {snapshot.plan.revision}</small>}</button>)}</nav>
+      <nav className="workspace-steps" aria-label="Consolidation steps"><span className="completed-step">1 Sources</span><span className="completed-step">2 Destination</span>{(["inventory", "plan", "results"] as const).map((item, index) => <button key={item} disabled={item === "plan" ? !snapshot?.plan && inventory?.state !== "complete" : item === "results" ? !snapshot?.plan : false} aria-current={step === item ? "step" : undefined} onClick={() => setStep(item)}><span>{index + 3}</span>{item === "inventory" ? "Scan & compare" : item === "plan" ? "Merge plan" : "Results"}{item === "plan" && snapshot?.plan && <small>Revision {snapshot.plan.revision}</small>}</button>)}</nav>
       {(error || snapshot?.error) && <div className="alert error" role="alert"><AlertCircle size={17} /><div><strong>Unable to finish this action</strong><p>{error || snapshot?.error}</p><small>{recoveryRequired ? "Choose Recover / Resume to recover the saved job and revalidate its sources. If recovery fails, check the reported storage or folder access problem and retry." : "Check folder access, then retry the action or reopen the saved job."}</small></div><button aria-label="Dismiss error" onClick={() => { setError(null); setSnapshot(previous => previous ? { ...previous, error: null } : previous); }}><X size={15} /></button></div>}
-      {bootstrap?.configuration_error && <details className="configuration"><summary><AlertCircle size={14} /> Demo configuration unavailable — choose folders to begin</summary><p>{bootstrap.configuration_error}</p><code>{bootstrap.manifest_path}</code></details>}
       <Consolidation snapshot={snapshot} sources={sources} onDestinationChange={selectPrimary} busy={busy || loading} step={step} rootName={rootName} act={act} onStep={setStep} onError={setError} onReveal={revealPlacement} />
       <div className="inventory-view" hidden={step !== "inventory"}>
       <section className="progress-strip" aria-label="Saved progress" aria-busy={active}>
@@ -241,6 +280,7 @@ export default function App() {
         </aside>}
       </div>
       </div>
+      <div className="job-step-actions"><button disabled={busy} onClick={() => step === "inventory" ? void showHome() : setStep(step === "results" ? "plan" : "inventory")}>← {step === "inventory" ? "All jobs" : step === "results" ? "Back to merge plan" : "Back to scan & compare"}</button>{step === "inventory" ? <button className="primary" disabled={blocked || inventory?.state !== "complete"} onClick={() => setStep("plan")}>Next: merge plan <ChevronRight size={14} /></button> : step === "plan" && snapshot?.plan ? <button disabled={busy} onClick={() => setStep("results")}>View results <ChevronRight size={14} /></button> : null}</div>
       <footer className="workspace-footer"><span><ShieldCheck size={13} /> Local inventory & consolidation</span><span>Review the plan. Copy approved additions. Keep your sources.</span></footer>
     </main>
   </div>;

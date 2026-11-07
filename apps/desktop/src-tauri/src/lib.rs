@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs,
-    os::unix::ffi::OsStrExt,
+    io::{Read, Write},
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -43,6 +44,7 @@ pub struct MappingInput {
 }
 
 enum Work {
+    Create(JobSetup),
     Scan(Option<Vec<String>>),
     Compare,
     Plan {
@@ -54,7 +56,7 @@ enum Work {
 impl Work {
     fn mode(&self) -> WorkerMode {
         match self {
-            Self::Scan(_) => WorkerMode::Scan,
+            Self::Create(_) | Self::Scan(_) => WorkerMode::Scan,
             Self::Compare => WorkerMode::Compare,
             Self::Plan { .. } => WorkerMode::Plan,
             Self::Execute(_) => WorkerMode::Execute,
@@ -73,6 +75,7 @@ struct Control {
 
 #[derive(Clone, Serialize)]
 struct Snapshot {
+    setup: Option<JobSetup>,
     #[serde(flatten)]
     control: Control,
     #[serde(flatten)]
@@ -96,9 +99,42 @@ struct Source {
     path: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JobSource {
+    pub label: String,
+    pub path: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JobSetup {
+    pub name: String,
+    pub sources: Vec<JobSource>,
+    pub destination: String,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct JobSummary {
+    pub id: String,
+    pub name: String,
+    pub created_ms: u64,
+    pub updated_ms: u64,
+    pub source_count: usize,
+    pub entry_count: usize,
+    pub state: String,
+    pub stage: String,
+    pub destination: Option<String>,
+    pub error: Option<String>,
+    pub active: bool,
+}
+#[derive(Serialize, Deserialize)]
+struct JobMetadata {
+    setup: JobSetup,
+    created_ms: u64,
+}
+
 impl Desktop {
     pub fn open(data: PathBuf) -> Result<Self> {
         fs::create_dir_all(data.join("jobs")).map_err(err)?;
+        let data = fs::canonicalize(data).map_err(err)?;
+        validate_jobs_directory(&data)?;
         let snapshot = read_saved(&data);
         Ok(Self {
             inner: Arc::new(Inner {
@@ -107,6 +143,79 @@ impl Desktop {
                 pause: AtomicBool::new(false),
             }),
         })
+    }
+    /// Compact saved-job rows. Listing does not load inventory or comparison arrays.
+    pub fn jobs(&self) -> Result<Vec<JobSummary>> {
+        let cached = self.inner.snapshot.lock().map_err(err)?;
+        validate_jobs_directory(&self.inner.data)?;
+        let mut rows = Vec::new();
+        for entry in fs::read_dir(self.inner.data.join("jobs")).map_err(err)? {
+            let entry = entry.map_err(err)?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let Some(id) = name.strip_suffix(".sqlite") else {
+                continue;
+            };
+            if valid_id(id).is_err() {
+                continue;
+            }
+            let selected = cached.control.job_id.as_deref() == Some(id);
+            let active = selected && cached.control.worker.is_some();
+            let mut row = job_summary(&self.inner.data, id, active);
+            if selected {
+                if let Some(worker) = cached.control.worker {
+                    row.state = match worker {
+                        WorkerMode::Scan => "scanning",
+                        WorkerMode::Compare => "comparing",
+                        WorkerMode::Plan => "planning",
+                        WorkerMode::Execute => "copying",
+                    }
+                    .into();
+                }
+                if cached.control.error.is_some() {
+                    row.error = cached.control.error.clone();
+                }
+            }
+            rows.push(row);
+        }
+        rows.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms).then(b.id.cmp(&a.id)));
+        Ok(rows)
+    }
+    pub fn open_job(&self, job_id: String) -> Result<Value> {
+        let mut cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err(
+                "Wait for the current operation to finish before opening another job.".into(),
+            );
+        }
+        existing_database(&self.inner.data, &job_id)?;
+        let next = read_job_snapshot(&self.inner.data, &job_id);
+        save_pointer(&self.inner.data, &job_id)?;
+        *cached = next;
+        cached.payload()
+    }
+    pub fn create_job(&self, setup: JobSetup) -> Result<Value> {
+        self.launch(Work::Create(setup))
+    }
+    /// Drafts intentionally accept incomplete wizard values. Sources are not touched.
+    pub fn save_draft(&self, setup: JobSetup) -> Result<()> {
+        let gate = self.inner.snapshot.lock().map_err(err)?;
+        if gate.control.worker.is_some() {
+            return Err(
+                "Wait for the current operation to finish before saving a new-job draft.".into(),
+            );
+        }
+        validate_setup_size(&setup)?;
+        atomic_write(
+            &self.inner.data.join("new-job-draft.json"),
+            &serde_json::to_vec(&setup).map_err(err)?,
+        )
+    }
+    pub fn draft(&self) -> Result<Option<JobSetup>> {
+        let _gate = self.inner.snapshot.lock().map_err(err)?;
+        read_json(&self.inner.data.join("new-job-draft.json"))
     }
     pub fn bootstrap(&self) -> Result<Value> {
         let path = self.inner.data.join("demo.json");
@@ -183,14 +292,14 @@ impl Desktop {
             .job_id
             .as_deref()
             .ok_or("Start a scan first.")?;
-        let database = self.inner.data.join("jobs").join(format!("{id}.sqlite"));
+        let database = existing_database(&self.inner.data, id)?;
         match decisions {
             Some(decisions) => Job::update_plan(&database, revision, &decisions),
             None => Job::approve_plan(&database, revision),
         }
         .map_err(err)?;
         let job = Job::open(&database).map_err(err)?;
-        *cached = job_snapshot(&job, id)?;
+        *cached = job_snapshot(&job, id, &self.inner.data)?;
         cached.payload()
     }
     pub fn execute(&self, revision: i64) -> Result<Value> {
@@ -199,13 +308,15 @@ impl Desktop {
     pub fn destination(&self) -> Result<PathBuf> {
         let cached = self.inner.snapshot.lock().map_err(err)?;
         let id = cached.control.job_id.as_deref().ok_or("No saved job.")?;
-        let job =
-            Job::open(&self.inner.data.join("jobs").join(format!("{id}.sqlite"))).map_err(err)?;
-        Ok(job
-            .consolidation_plan()
-            .map_err(err)?
-            .ok_or("No saved merge plan.")?
-            .destination)
+        let job = Job::open(&existing_database(&self.inner.data, id)?).map_err(err)?;
+        if let Some(plan) = job.consolidation_plan().map_err(err)? {
+            return Ok(plan.destination);
+        }
+        cached
+            .setup
+            .as_ref()
+            .map(|s| PathBuf::from(&s.destination))
+            .ok_or_else(|| "No primary destination is saved.".into())
     }
     pub fn pause(&self) -> Result<Value> {
         let mut snapshot = self.inner.snapshot.lock().map_err(err)?;
@@ -222,8 +333,13 @@ impl Desktop {
                 "A job is already running. Pause it before starting another operation.".into(),
             );
         }
+        let work = match work {
+            Work::Create(setup) => Work::Create(normalize_setup(setup, &self.inner.data)?),
+            other => other,
+        };
         let mode = work.mode();
-        let id = if matches!(&work, Work::Scan(Some(_))) {
+        let creating = matches!(&work, Work::Create(_) | Work::Scan(Some(_)));
+        let id = if creating {
             format!(
                 "{}-{}",
                 SystemTime::now()
@@ -240,6 +356,15 @@ impl Desktop {
                 .ok_or("Start a scan before resuming or comparing.")?
                 .to_owned()
         };
+        if creating {
+            *snapshot = empty_snapshot();
+            snapshot.control.job_id = Some(id.clone());
+            if let Work::Create(setup) = &work {
+                snapshot.setup = Some(setup.clone());
+            }
+        } else {
+            existing_database(&self.inner.data, &id)?;
+        }
         self.inner.pause.store(false, Ordering::Release);
         snapshot.control.worker = Some(mode);
         snapshot.control.pause_requested = false;
@@ -272,7 +397,7 @@ impl Desktop {
         Ok(initial)
     }
     fn publish(&self, job: &Job, id: &str, mode: WorkerMode) -> Result<()> {
-        let mut next = job_snapshot(job, id)?;
+        let mut next = job_snapshot(job, id, &self.inner.data)?;
         next.control.worker = Some(mode);
         next.control.pause_requested = self.inner.pause.load(Ordering::Acquire);
         *self.inner.snapshot.lock().map_err(err)? = next;
@@ -280,18 +405,41 @@ impl Desktop {
     }
     fn work(&self, id: &str, work: Work) -> Result<()> {
         let mode = work.mode();
+        validate_jobs_directory(&self.inner.data)?;
+        valid_id(id)?;
         let database = self.inner.data.join("jobs").join(format!("{id}.sqlite"));
+        if !matches!(&work, Work::Create(_) | Work::Scan(Some(_))) {
+            existing_database(&self.inner.data, id)?;
+        }
         let mut job = match work {
+            Work::Create(setup) => {
+                let roots: Vec<_> = setup
+                    .sources
+                    .iter()
+                    .map(|source| PathBuf::from(&source.path))
+                    .collect();
+                let job = Job::create(&database, &roots, Options::default()).map_err(err)?;
+                let metadata = JobMetadata {
+                    setup,
+                    created_ms: now_ms()?,
+                };
+                atomic_write(
+                    &metadata_path(&self.inner.data, id),
+                    &serde_json::to_vec(&metadata).map_err(err)?,
+                )?;
+                save_pointer(&self.inner.data, id)?;
+                match fs::remove_file(self.inner.data.join("new-job-draft.json")) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(err(e)),
+                }
+                job
+            }
             Work::Scan(Some(roots)) => {
                 let roots: Vec<_> = roots.into_iter().map(PathBuf::from).collect();
                 let job = Job::create(&database, &roots, Options::default()).map_err(err)?;
                 // The core performs source/database safety checks before any saved selection is published.
-                fs::write(self.inner.data.join("current-job.next"), id).map_err(err)?;
-                fs::rename(
-                    self.inner.data.join("current-job.next"),
-                    self.inner.data.join("current-job"),
-                )
-                .map_err(err)?;
+                save_pointer(&self.inner.data, id)?;
                 job
             }
             Work::Scan(None) => Job::resume(&database).map_err(err)?,
@@ -360,31 +508,355 @@ impl Desktop {
         Ok(())
     }
 }
-fn read_saved(data: &Path) -> Snapshot {
-    let mut snapshot = empty_snapshot();
-    match fs::read_to_string(data.join("current-job")) {
-        Ok(id) => match valid_id(id.trim()).and_then(|id| {
-            // Inspection is read-only and may fail while SQLite needs writer recovery.
-            // Keep only a validated pointer so an explicit Resume can use core guards.
+
+fn now_ms() -> Result<u64> {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(err)?
+            .as_millis(),
+    )
+    .map_err(err)
+}
+fn millis(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|t| u64::try_from(t.as_millis()).ok())
+        .unwrap_or(0)
+}
+fn validate_jobs_directory(data: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(data.join("jobs")).map_err(err)?;
+    if !metadata.is_dir() {
+        return Err("Saved jobs directory must be a real directory, not a link.".into());
+    }
+    Ok(())
+}
+fn existing_database(data: &Path, id: &str) -> Result<PathBuf> {
+    valid_id(id)?;
+    validate_jobs_directory(data)?;
+    let database = data.join("jobs").join(format!("{id}.sqlite"));
+    let metadata = fs::symlink_metadata(&database).map_err(err)?;
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err("Saved job database must be a regular file without link aliases.".into());
+    }
+    Ok(database)
+}
+fn read_regular(path: &Path) -> std::io::Result<Vec<u8>> {
+    let before = fs::symlink_metadata(path)?;
+    if !before.is_file() || before.nlink() != 1 || before.len() > 1024 * 1024 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "saved settings must be a regular file without link aliases and under 1 MiB",
+        ));
+    }
+    let mut file = fs::File::open(path)?;
+    let actual = file.metadata()?;
+    if before.dev() != actual.dev() || before.ino() != actual.ino() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "saved settings changed while opening",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    match read_regular(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(err),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(err(error)),
+    }
+}
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().ok_or("Settings need a parent directory.")?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Invalid settings filename.")?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(err)?
+        .as_nanos();
+    let temporary = parent.join(format!(".{name}.{stamp}-{}.tmp", std::process::id()));
+    let result = (|| -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(err)?;
+        file.write_all(bytes).map_err(err)?;
+        file.sync_all().map_err(err)?;
+        fs::rename(&temporary, path).map_err(err)?;
+        fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(err)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+fn save_pointer(data: &Path, id: &str) -> Result<()> {
+    valid_id(id)?;
+    atomic_write(&data.join("current-job"), id.as_bytes())
+}
+fn metadata_path(data: &Path, id: &str) -> PathBuf {
+    data.join("jobs").join(format!("{id}.json"))
+}
+fn validate_setup_size(setup: &JobSetup) -> Result<()> {
+    if setup.name.len() > 256
+        || setup.sources.len() > 512
+        || setup.destination.len() > 16384
+        || setup
+            .sources
+            .iter()
+            .any(|s| s.path.len() > 16384 || s.label.len() > 1024)
+        || serde_json::to_vec(setup).map_err(err)?.len() > 1024 * 1024
+    {
+        return Err("Job setup is too large.".into());
+    }
+    Ok(())
+}
+fn normalize_setup(mut setup: JobSetup, data: &Path) -> Result<JobSetup> {
+    validate_setup_size(&setup)?;
+    setup.name = setup.name.trim().to_owned();
+    if setup.name.is_empty() {
+        return Err("Name this job before starting the scan.".into());
+    }
+    if setup.destination.is_empty() {
+        return Err("Choose an existing primary destination before scanning.".into());
+    }
+    let destination = fs::canonicalize(&setup.destination)
+        .map_err(|e| format!("Primary destination is unavailable: {e}"))?;
+    if !destination.is_dir() {
+        return Err("Primary destination must be an existing folder.".into());
+    }
+    if data.starts_with(&destination) || destination.starts_with(data.join("jobs")) {
+        return Err(
+            "Primary destination must be separate from Folderloom's saved-job storage.".into(),
+        );
+    }
+    let mut sources = Vec::<JobSource>::new();
+    let mut paths = Vec::<PathBuf>::new();
+    for source in setup.sources {
+        let path = fs::canonicalize(&source.path)
+            .map_err(|e| format!("Source folder is unavailable: {e}"))?;
+        if !path.is_dir() {
+            return Err("Every source must be an existing folder.".into());
+        }
+        if path == destination {
+            continue;
+        }
+        if path.starts_with(&destination) || destination.starts_with(&path) {
+            return Err("Primary destination and incoming source folders must not overlap.".into());
+        }
+        if data.starts_with(&path) || path.starts_with(data.join("jobs")) {
+            return Err("Sources must be separate from Folderloom's saved-job storage.".into());
+        }
+        if paths.contains(&path) {
+            continue;
+        }
+        if paths
+            .iter()
+            .any(|other| path.starts_with(other) || other.starts_with(&path))
+        {
+            return Err("Incoming source folders must not overlap each other.".into());
+        }
+        let label = if source.label.trim().is_empty() {
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Source".into())
+        } else {
+            source.label.trim().to_owned()
+        };
+        sources.push(JobSource {
+            label,
+            path: path
+                .to_str()
+                .ok_or("Selected source path cannot be represented by the folder picker.")?
+                .into(),
+        });
+        paths.push(path);
+    }
+    if sources.is_empty() {
+        return Err(
+            "Choose at least one incoming source other than the primary destination.".into(),
+        );
+    }
+    setup.sources = sources;
+    setup.destination = destination
+        .to_str()
+        .ok_or("Selected destination path cannot be represented by the folder picker.")?
+        .into();
+    Ok(setup)
+}
+fn derived_setup(job: &Job, id: &str, destination: Option<&Path>) -> Result<Option<JobSetup>> {
+    let roots = job.roots().map_err(err)?;
+    let mut sources = Vec::new();
+    for root in roots {
+        let Some(path) = root.path.to_str() else {
+            return Ok(None);
+        };
+        sources.push(JobSource {
+            label: root
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Source".into()),
+            path: path.into(),
+        });
+    }
+    let destination = match destination {
+        Some(path) => match path.to_str() {
+            Some(path) => path.into(),
+            None => return Ok(None),
+        },
+        None => String::new(),
+    };
+    Ok(Some(JobSetup {
+        name: format!("Scan {id}"),
+        sources,
+        destination,
+    }))
+}
+fn job_summary(data: &Path, id: &str, active: bool) -> JobSummary {
+    let database = data.join("jobs").join(format!("{id}.sqlite"));
+    let fs_metadata = fs::symlink_metadata(&database).ok();
+    let created_ms = id
+        .split('-')
+        .next()
+        .and_then(|part| part.parse::<u128>().ok())
+        .and_then(|n| u64::try_from(n / 1_000_000).ok())
+        .filter(|n| *n > 0)
+        .or_else(|| {
+            fs_metadata
+                .as_ref()
+                .and_then(|m| m.created().ok())
+                .map(millis)
+        })
+        .unwrap_or(0);
+    let updated_ms = fs_metadata
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .map(millis)
+        .unwrap_or(created_ms);
+    let mut row = JobSummary {
+        id: id.into(),
+        name: format!("Scan {id}"),
+        created_ms,
+        updated_ms,
+        source_count: 0,
+        entry_count: 0,
+        state: "unavailable".into(),
+        stage: "inventory".into(),
+        destination: None,
+        error: None,
+        active,
+    };
+    match read_json::<JobMetadata>(&metadata_path(data, id)) {
+        Ok(Some(metadata)) => {
+            row.name = metadata.setup.name;
+            row.source_count = metadata.setup.sources.len();
+            row.destination = Some(metadata.setup.destination);
+            row.created_ms = metadata.created_ms;
+        }
+        Ok(None) => {}
+        Err(message) => row.error = Some(format!("Saved job setup could not be read: {message}")),
+    }
+    let inspection = (|| -> Result<()> {
+        let job = Job::open(&existing_database(data, id)?).map_err(err)?;
+        let progress = job.progress().map_err(err)?;
+        row.state = state(progress.state);
+        row.entry_count = progress.entries;
+        let roots = job.roots().map_err(err)?;
+        row.source_count = roots.len();
+        if row.name == format!("Scan {id}") {
+            let names: Vec<_> = roots
+                .iter()
+                .filter_map(|r| r.path.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .collect();
+            if !names.is_empty() {
+                row.name = format!("Scan — {}", names.join(", "));
+            }
+        }
+        if let Some(plan) = job.consolidation_plan().map_err(err)? {
+            row.stage = if plan.generation != progress.generation
+                || matches!(plan.state.as_str(), "proposed" | "approved")
+            {
+                "plan"
+            } else {
+                "results"
+            }
+            .into();
+            row.state = if plan.generation != progress.generation {
+                "needs_replan".into()
+            } else {
+                plan.state
+            };
+            row.destination = Some(display_path(&plan.destination));
+        } else {
+            let comparison = job.comparison_progress().map_err(err)?;
+            row.state = match comparison.state {
+                ComparisonState::Running => "comparison_running".into(),
+                ComparisonState::Paused => "comparison_paused".into(),
+                ComparisonState::FinishedWithErrors => "comparison_finished_with_errors".into(),
+                ComparisonState::Complete => "comparison_complete".into(),
+                _ => row.state.clone(),
+            };
+        }
+        Ok(())
+    })();
+    if let Err(message) = inspection {
+        row.error = Some(format!("Saved job could not be read: {message}"));
+    }
+    row
+}
+
+fn read_job_snapshot(data: &Path, id: &str) -> Snapshot {
+    let saved = existing_database(data, id)
+        .and_then(|database| Job::open(&database).map_err(err))
+        .and_then(|job| job_snapshot(&job, id, data));
+    match saved {
+        Ok(snapshot) => snapshot,
+        Err(message) => {
+            let mut snapshot = empty_snapshot();
             snapshot.control.job_id = Some(id.to_owned());
             snapshot.control.recovery_required = true;
-            let job = Job::open(&data.join("jobs").join(format!("{id}.sqlite"))).map_err(err)?;
-            job_snapshot(&job, id)
-        }) {
-            Ok(saved) => snapshot = saved,
-            Err(message) => {
-                snapshot.control.error = Some(format!("Saved job could not be reopened: {message}"))
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            snapshot.control.error = Some(format!("Saved job pointer could not be read: {e}"))
+            snapshot.control.error = Some(format!("Saved job could not be reopened: {message}"));
+            snapshot.setup = read_json::<JobMetadata>(&metadata_path(data, id))
+                .ok()
+                .flatten()
+                .map(|m| m.setup);
+            snapshot
         }
     }
-    snapshot
+}
+fn read_saved(data: &Path) -> Snapshot {
+    match read_regular(&data.join("current-job")).and_then(|bytes| {
+        String::from_utf8(bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }) {
+        Ok(id) => match valid_id(id.trim()) {
+            Ok(id) => read_job_snapshot(data, id),
+            Err(message) => {
+                let mut snapshot = empty_snapshot();
+                snapshot.control.error = Some(message);
+                snapshot
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => empty_snapshot(),
+        Err(e) => {
+            let mut snapshot = empty_snapshot();
+            snapshot.control.error = Some(format!("Saved job pointer could not be read: {e}"));
+            snapshot
+        }
+    }
 }
 fn valid_id(id: &str) -> Result<&str> {
-    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
+    if id.is_empty() || id.len() > 100 || !id.bytes().all(|b| b.is_ascii_digit() || b == b'-') {
         Err("Invalid saved job identifier.".into())
     } else {
         Ok(id)
@@ -392,6 +864,7 @@ fn valid_id(id: &str) -> Result<&str> {
 }
 fn empty_snapshot() -> Snapshot {
     Snapshot {
+        setup: None,
         control: Control::default(),
         observations: json!({"roots":[],"inventory_progress":null,"comparison_progress":null,"entries":[],"comparisons":[],"failures":[],"root_failures":[],"plan":null}),
     }
@@ -444,7 +917,7 @@ fn display_path(path: &Path) -> String {
     }
     result
 }
-fn job_snapshot(job: &Job, id: &str) -> Result<Snapshot> {
+fn job_snapshot(job: &Job, id: &str, data: &Path) -> Result<Snapshot> {
     let p = job.progress().map_err(err)?;
     let c = job.comparison_progress().map_err(err)?;
     let plan = job.consolidation_plan().map_err(err)?.map(|plan| json!({
@@ -454,9 +927,32 @@ fn job_snapshot(job: &Job, id: &str) -> Result<Snapshot> {
         "mappings":plan.mappings.iter().map(|m|json!({"root_id":m.root_id,"source_key":key(m.root_id,&m.source_relative),"source_relative":display_path(&m.source_relative),"destination_relative":display_path(&m.destination_relative),"destination_input":m.destination_relative.to_str()})).collect::<Vec<_>>(),
         "items":plan.items.iter().map(|i|json!({"id":i.id,"root_id":i.root_id,"source_key":key(i.root_id,&i.source_relative),"source_relative":display_path(&i.source_relative),"destination_relative":display_path(&i.destination_relative),"action":i.action,"included":i.included,"status":i.status,"detail":i.detail,"hash":i.hash,"contributors":i.contributors.iter().map(|c|json!({"root_id":c.root_id,"source_relative":display_path(&c.source_relative)})).collect::<Vec<_>>()})).collect::<Vec<_>>()
     }));
+    let metadata = read_json::<JobMetadata>(&metadata_path(data, id));
+    let metadata_error = metadata
+        .as_ref()
+        .err()
+        .map(|message| format!("Saved job setup could not be read: {message}"));
+    let setup = match metadata.ok().flatten() {
+        Some(metadata) => Some(metadata.setup),
+        None if plan
+            .as_ref()
+            .is_some_and(|p| p["destination_input"].is_null()) =>
+        {
+            None
+        }
+        None => {
+            let destination = plan
+                .as_ref()
+                .and_then(|p| p["destination_input"].as_str())
+                .map(Path::new);
+            derived_setup(job, id, destination)?
+        }
+    };
     Ok(Snapshot {
+        setup,
         control: Control {
             job_id: Some(id.to_owned()),
+            error: metadata_error,
             ..Control::default()
         },
         observations: json!({
@@ -476,6 +972,41 @@ fn job_snapshot(job: &Job, id: &str) -> Result<Snapshot> {
 mod shell {
     use super::*;
     use tauri::Manager;
+    #[tauri::command]
+    async fn desktop_jobs(app: tauri::State<'_, Desktop>) -> Result<Vec<JobSummary>> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.jobs())
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_open_job(app: tauri::State<'_, Desktop>, job_id: String) -> Result<Value> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.open_job(job_id))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_create_job(app: tauri::State<'_, Desktop>, setup: JobSetup) -> Result<Value> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.create_job(setup))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_save_draft(app: tauri::State<'_, Desktop>, setup: JobSetup) -> Result<()> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.save_draft(setup))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_draft(app: tauri::State<'_, Desktop>) -> Result<Option<JobSetup>> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.draft())
+            .await
+            .map_err(err)?
+    }
     #[tauri::command]
     async fn desktop_bootstrap(app: tauri::State<'_, Desktop>) -> Result<Value> {
         let app = app.inner().clone();
@@ -555,6 +1086,11 @@ mod shell {
             })
             .invoke_handler(tauri::generate_handler![
                 desktop_bootstrap,
+                desktop_jobs,
+                desktop_open_job,
+                desktop_create_job,
+                desktop_save_draft,
+                desktop_draft,
                 desktop_snapshot,
                 desktop_start,
                 desktop_run,

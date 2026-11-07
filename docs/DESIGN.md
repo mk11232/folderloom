@@ -8,6 +8,10 @@ A local desktop application for deliberate consolidation of overlapping folder c
 
 macOS and OS-connected NAS folders are the initial target. Choose portable foundations for Windows; include Windows early only if actual build and filesystem validation are feasible without substantially delaying the Mac version.
 
+## Desktop navigation
+
+The implemented desktop opens to a saved Jobs table. New job guides Sources → Primary destination → Scan and compare → Merge plan → Results. Setup selections can be removed without deleting files. Started jobs retain their original source set; Use as new job creates a separate draft for changes. See [the job workflow](jobs-workflow.md). The broader product workflow below still includes deferred features.
+
 ## Workflow
 
 1. Configure sources, primary destination, source labels, and whether to include empty folders (default Include). For an empty primary, select a structure reference.
