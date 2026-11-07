@@ -40,3 +40,11 @@ This is a local, ad-hoc signed macOS development build. CI also checks Linux. Mo
 - Installed executable SHA-256: `f3c73aef1cc7c1437548f38289653416492da4b7425273cef73f509a3f72cf40`.
 
 Kimi K3 High independently reviewed archive/restore and permanent deletion and reported no blocking issues. Its frontend tests and typecheck passed; its Rust adapter tests passed with the 26.5 SDK and default desktop features disabled. The full native build and installed-app checks above were performed separately with desktop features enabled.
+
+## Resize and cancelled setup fixes — November 7, 2026
+
+Reproduced the missing action column in the installed app at the previous 960 × 640 minimum, along with the inability to shrink further. Verified the rebuilt installed app at 720 × 500 with Open and Archive still visible, and observed the archived row’s Open, Restore, and Delete controls at a wider compact size. The user took over native interaction afterward; no further automated UI changes were made.
+
+The two new cancellation serialization tests failed before implementation and passed afterward. All 29 frontend tests and 14 desktop job tests pass, including cancellation across restart, empty-draft suppression, preservation of started jobs and source bytes, and the active-worker gate. TypeScript, native bundle, signature verification, and desktop Clippy passed. Kimi K3 High’s text-only cancellation review found no blocking issues. Cancellation persistence was verified through the real backend tests, not claimed as a completed native cancel/restart exercise.
+
+Installed executable SHA-256: `b7097194899e1497536cc41d505d9274ba088c636456c53a1f4222dbced2a1cf`.

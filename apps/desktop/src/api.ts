@@ -21,6 +21,7 @@ export type Snapshot = {
 };
 export type Bootstrap = { manifest: { title: string; description: string; roots: Source[] }; manifest_path: string; configuration_error: string | null; snapshot: Snapshot };
 export const api = {
+  clearDraft: () => invoke<void>("desktop_clear_draft"),
   deleteJob: (jobId: string) => invoke<Snapshot>("desktop_delete_job", { jobId }),
   setJobArchived: (jobId: string, archived: boolean) => invoke<void>("desktop_set_job_archived", { jobId, archived }),
   jobs: () => invoke<JobSummary[]>("desktop_jobs"),

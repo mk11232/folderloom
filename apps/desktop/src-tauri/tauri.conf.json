@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Folderloom",
-        "width": 1440,
-        "height": 940,
-        "minWidth": 960,
-        "minHeight": 640
+        "width": 1100,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 500
       }
     ],
     "security": {

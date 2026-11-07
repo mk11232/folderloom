@@ -12,7 +12,7 @@ The graphical app scans, compares, saves folder mappings and merge decisions, an
 
 Folderloom opens to **Jobs**, a table of saved scans and consolidation jobs. Open a row to resume its saved stage, or choose **New job**. No account or login is required. Choose **Archive** to move a finished job out of Current; use **Archived → Restore** to bring it back. Archiving retains its saved history, source files, and destination files. Archived jobs offer **Delete permanently** to free their local database space after confirmation; this deletes saved job records only, never source folders or copied files.
 
-1. **Sources:** name the job and add its source folders. **Remove** only removes a folder from this setup; it never deletes files. Unstarted setup is saved locally as a draft.
+1. **Sources:** name the job and add its source folders. **Remove** only removes a folder from this setup; it never deletes files. Unstarted setup with entered choices is saved locally as a draft. **Save & close** keeps it for later; **Cancel setup** discards it. Empty setups do not create a pending draft.
 2. **Primary destination:** choose an existing folder, empty or populated, or use a listed folder as primary. Its contents stay in place. The primary is excluded from incoming sources.
 3. **Scan and compare:** start the scan, expand folders to explore their files, and compare contents. Matching-location dropdowns show every observed matching placement. Pause and resume saved work as needed.
 4. **Merge plan:** choose incoming folders and target subfolders, build the plan, and review every exact output path. Exclude unwanted items and approve the displayed revision. Matching contents at the same output path share one placement; differing contents get previewed conflict names.

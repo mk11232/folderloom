@@ -294,10 +294,21 @@ impl Desktop {
             );
         }
         validate_setup_size(&setup)?;
+        if setup.name.trim().is_empty() && setup.sources.is_empty() && setup.destination.is_empty()
+        {
+            return remove_draft(&self.inner.data);
+        }
         atomic_write(
             &self.inner.data.join("new-job-draft.json"),
             &serde_json::to_vec(&setup).map_err(err)?,
         )
+    }
+    pub fn clear_draft(&self) -> Result<()> {
+        let cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err("Wait for the current operation to finish before cancelling setup.".into());
+        }
+        remove_draft(&self.inner.data)
     }
     pub fn draft(&self) -> Result<Option<JobSetup>> {
         let _gate = self.inner.snapshot.lock().map_err(err)?;
@@ -687,6 +698,15 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 fn save_pointer(data: &Path, id: &str) -> Result<()> {
     valid_id(id)?;
     atomic_write(&data.join("current-job"), id.as_bytes())
+}
+fn remove_draft(data: &Path) -> Result<()> {
+    match fs::remove_file(data.join("new-job-draft.json")) {
+        Ok(()) => fs::File::open(data)
+            .and_then(|dir| dir.sync_all())
+            .map_err(err),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(err(e)),
+    }
 }
 fn metadata_path(data: &Path, id: &str) -> PathBuf {
     data.join("jobs").join(format!("{id}.json"))
@@ -1110,6 +1130,13 @@ mod shell {
             .map_err(err)?
     }
     #[tauri::command]
+    async fn desktop_clear_draft(app: tauri::State<'_, Desktop>) -> Result<()> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.clear_draft())
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
     async fn desktop_draft(app: tauri::State<'_, Desktop>) -> Result<Option<JobSetup>> {
         let app = app.inner().clone();
         tauri::async_runtime::spawn_blocking(move || app.draft())
@@ -1201,6 +1228,7 @@ mod shell {
                 desktop_open_job,
                 desktop_create_job,
                 desktop_save_draft,
+                desktop_clear_draft,
                 desktop_draft,
                 desktop_snapshot,
                 desktop_start,

@@ -274,6 +274,7 @@ fn active_writer_gate_prevents_switch_create_and_draft_lost_updates() {
             .unwrap_err()
             .contains("current operation")
     );
+    assert!(app.clear_draft().unwrap_err().contains("current operation"));
     lock.execute_batch("COMMIT").unwrap();
     drop(lock);
     let saved = idle(&app);
@@ -539,4 +540,32 @@ fn delete_rejects_external_writer_and_preserves_other_selected_job() {
     drop(app);
     let reopened = Desktop::open(f.data.clone()).unwrap();
     assert_eq!(reopened.snapshot().unwrap()["job_id"], selected["job_id"]);
+}
+
+#[test]
+fn cancelling_setup_is_durable_and_does_not_remove_started_jobs_or_files() {
+    let f = Fixture::new();
+    let app = Desktop::open(f.data.clone()).unwrap();
+    let saved = f.create(&app, "Keep job");
+    app.save_draft(f.setup("Cancelled setup")).unwrap();
+    app.clear_draft().unwrap();
+    app.clear_draft().unwrap();
+    drop(app);
+    let app = Desktop::open(f.data.clone()).unwrap();
+    assert!(app.draft().unwrap().is_none());
+    assert_eq!(app.jobs().unwrap().len(), 1);
+    assert_eq!(app.snapshot().unwrap()["job_id"], saved["job_id"]);
+    assert_eq!(
+        fs::read(f.source.join("file.txt")).unwrap(),
+        b"synthetic source"
+    );
+    app.save_draft(JobSetup {
+        name: "  ".into(),
+        sources: vec![],
+        destination: String::new(),
+    })
+    .unwrap();
+    assert!(app.draft().unwrap().is_none());
+    drop(app);
+    assert!(Desktop::open(f.data).unwrap().draft().unwrap().is_none());
 }

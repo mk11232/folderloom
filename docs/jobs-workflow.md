@@ -23,3 +23,9 @@ This adds navigation and setup to the existing [copy-only workflow](consolidatio
 The Jobs table separates Current and Archived jobs. Archive and Restore persist locally across app restarts and keep each job database, setup, sources, and destination intact. Archived jobs can still be opened for review. Archive and Restore are unavailable while a filesystem operation is running. Older jobs without archive state remain Current.
 
 Archived jobs also offer Delete permanently. The confirmation names the job and explains the loss of saved scans, comparisons, plans, and results. Deletion removes only that job’s local SQLite database, SQLite sidecars, setup metadata, and archive marker. Source and destination files, other jobs, and the setup draft are retained. A running operation blocks deletion; deleting the selected job clears the saved selection.
+
+## Smaller windows and setup cancellation
+
+The native window can shrink to 720 × 500. At compact widths, Jobs switches from table columns to rows that keep Open, Archive/Restore, and Delete visible. The decorative Jobs sidebar drops away below 900 pixels.
+
+Save & close keeps a setup draft. Cancel setup waits for queued writes and then removes that draft; Discard setup does the same from Jobs. Neither removes a started job or source files. Empty setups are not retained as unfinished work.
