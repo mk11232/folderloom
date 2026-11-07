@@ -2,7 +2,7 @@
 
 ## Build and run
 
-The desktop interface uses the same public Rust `Job` operations as the CLI. It bundles its React interface inside the application; no hosted backend, external fonts, or source-content upload is involved. The demo exposes inventory and comparison only.
+The desktop interface uses the same public Rust `Job` operations as the CLI. It bundles its React interface inside the application; no hosted backend, external fonts, or source-content upload is involved. The desktop exposes inventory, comparison, manual folder mappings, saved plan approval, copy-only execution and verified results. Sources remain in place. See [the consolidation workflow](consolidation-workflow.md).
 
 From `apps/desktop`, using Node 22.12+ (Node 26 was used during development), npm, Rust (including its documentation component), Python 3.9+, and the macOS native build prerequisites:
 

@@ -1,5 +1,5 @@
 //! Desktop adapter: one background writer, saved checkpoints, and read-only snapshots.
-use folderloom_core::{ComparisonState, Job, Options, State};
+use folderloom_core::{ComparisonState, Job, Mapping, Options, PlanDecision, State};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -32,6 +32,34 @@ struct Inner {
 enum WorkerMode {
     Scan,
     Compare,
+    Plan,
+    Execute,
+}
+
+#[derive(Deserialize)]
+pub struct MappingInput {
+    pub source_key: String,
+    pub destination_relative: String,
+}
+
+enum Work {
+    Scan(Option<Vec<String>>),
+    Compare,
+    Plan {
+        destination: String,
+        mappings: Vec<MappingInput>,
+    },
+    Execute(i64),
+}
+impl Work {
+    fn mode(&self) -> WorkerMode {
+        match self {
+            Self::Scan(_) => WorkerMode::Scan,
+            Self::Compare => WorkerMode::Compare,
+            Self::Plan { .. } => WorkerMode::Plan,
+            Self::Execute(_) => WorkerMode::Execute,
+        }
+    }
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -123,15 +151,61 @@ impl Desktop {
         if roots.is_empty() {
             return Err("Select at least one source folder.".into());
         }
-        self.launch(WorkerMode::Scan, Some(roots))
+        self.launch(Work::Scan(Some(roots)))
     }
     pub fn run_job(&self, mode: &str) -> Result<Value> {
         let mode = match mode {
-            "scan" => WorkerMode::Scan,
-            "compare" => WorkerMode::Compare,
+            "scan" => Work::Scan(None),
+            "compare" => Work::Compare,
             _ => return Err("Unknown job operation.".into()),
         };
-        self.launch(mode, None)
+        self.launch(mode)
+    }
+    pub fn plan(&self, destination: String, mappings: Vec<MappingInput>) -> Result<Value> {
+        self.launch(Work::Plan {
+            destination,
+            mappings,
+        })
+    }
+    pub fn decide(&self, revision: i64, decisions: Vec<PlanDecision>) -> Result<Value> {
+        self.edit_plan(revision, Some(decisions))
+    }
+    pub fn approve(&self, revision: i64) -> Result<Value> {
+        self.edit_plan(revision, None)
+    }
+    fn edit_plan(&self, revision: i64, decisions: Option<Vec<PlanDecision>>) -> Result<Value> {
+        let mut cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err("Wait for the current operation to finish before editing the plan.".into());
+        }
+        let id = cached
+            .control
+            .job_id
+            .as_deref()
+            .ok_or("Start a scan first.")?;
+        let database = self.inner.data.join("jobs").join(format!("{id}.sqlite"));
+        match decisions {
+            Some(decisions) => Job::update_plan(&database, revision, &decisions),
+            None => Job::approve_plan(&database, revision),
+        }
+        .map_err(err)?;
+        let job = Job::open(&database).map_err(err)?;
+        *cached = job_snapshot(&job, id)?;
+        cached.payload()
+    }
+    pub fn execute(&self, revision: i64) -> Result<Value> {
+        self.launch(Work::Execute(revision))
+    }
+    pub fn destination(&self) -> Result<PathBuf> {
+        let cached = self.inner.snapshot.lock().map_err(err)?;
+        let id = cached.control.job_id.as_deref().ok_or("No saved job.")?;
+        let job =
+            Job::open(&self.inner.data.join("jobs").join(format!("{id}.sqlite"))).map_err(err)?;
+        Ok(job
+            .consolidation_plan()
+            .map_err(err)?
+            .ok_or("No saved merge plan.")?
+            .destination)
     }
     pub fn pause(&self) -> Result<Value> {
         let mut snapshot = self.inner.snapshot.lock().map_err(err)?;
@@ -141,14 +215,15 @@ impl Desktop {
         }
         snapshot.payload()
     }
-    fn launch(&self, mode: WorkerMode, roots: Option<Vec<String>>) -> Result<Value> {
+    fn launch(&self, work: Work) -> Result<Value> {
         let mut snapshot = self.inner.snapshot.lock().map_err(err)?;
         if snapshot.control.worker.is_some() {
             return Err(
                 "A job is already running. Pause it before starting another operation.".into(),
             );
         }
-        let id = if roots.is_some() {
+        let mode = work.mode();
+        let id = if matches!(&work, Work::Scan(Some(_))) {
             format!(
                 "{}-{}",
                 SystemTime::now()
@@ -172,23 +247,24 @@ impl Desktop {
         let initial = snapshot.payload()?;
         let app = self.clone();
         // Reserve the worker under the mutex before spawn; concurrent IPC cannot admit a second writer.
-        let spawned = std::thread::Builder::new()
-            .name("folderloom-job".into())
-            .spawn(move || {
-                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    app.work(&id, mode, roots)
-                }))
-                .unwrap_or_else(|_| {
-                    Err("Worker stopped unexpectedly. Reopen and resume the saved job.".into())
-                });
-                if let Ok(mut state) = app.inner.snapshot.lock() {
-                    state.control.worker = None;
-                    state.control.pause_requested = false;
-                    if let Err(message) = outcome {
-                        state.control.error = Some(message);
+        let spawned =
+            std::thread::Builder::new()
+                .name("folderloom-job".into())
+                .spawn(move || {
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        app.work(&id, work)
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err("Worker stopped unexpectedly. Reopen and resume the saved job.".into())
+                    });
+                    if let Ok(mut state) = app.inner.snapshot.lock() {
+                        state.control.worker = None;
+                        state.control.pause_requested = false;
+                        if let Err(message) = outcome {
+                            state.control.error = Some(message);
+                        }
                     }
-                }
-            });
+                });
         if let Err(e) = spawned {
             snapshot.control.worker = None;
             return Err(err(e));
@@ -202,39 +278,79 @@ impl Desktop {
         *self.inner.snapshot.lock().map_err(err)? = next;
         Ok(())
     }
-    fn work(&self, id: &str, mode: WorkerMode, roots: Option<Vec<String>>) -> Result<()> {
+    fn work(&self, id: &str, work: Work) -> Result<()> {
+        let mode = work.mode();
         let database = self.inner.data.join("jobs").join(format!("{id}.sqlite"));
-        let mut job = if let Some(roots) = roots {
-            let roots: Vec<_> = roots.into_iter().map(PathBuf::from).collect();
-            let job = Job::create(&database, &roots, Options::default()).map_err(err)?;
-            // The core performs source/database safety checks before any saved selection is published.
-            fs::write(self.inner.data.join("current-job.next"), id).map_err(err)?;
-            fs::rename(
-                self.inner.data.join("current-job.next"),
-                self.inner.data.join("current-job"),
-            )
-            .map_err(err)?;
-            job
-        } else if matches!(mode, WorkerMode::Scan) {
-            Job::resume(&database).map_err(err)?
-        } else {
-            Job::compare(&database).map_err(err)?
+        let mut job = match work {
+            Work::Scan(Some(roots)) => {
+                let roots: Vec<_> = roots.into_iter().map(PathBuf::from).collect();
+                let job = Job::create(&database, &roots, Options::default()).map_err(err)?;
+                // The core performs source/database safety checks before any saved selection is published.
+                fs::write(self.inner.data.join("current-job.next"), id).map_err(err)?;
+                fs::rename(
+                    self.inner.data.join("current-job.next"),
+                    self.inner.data.join("current-job"),
+                )
+                .map_err(err)?;
+                job
+            }
+            Work::Scan(None) => Job::resume(&database).map_err(err)?,
+            Work::Compare => Job::compare(&database).map_err(err)?,
+            Work::Plan {
+                destination,
+                mappings,
+            } => {
+                let saved = Job::open(&database).map_err(err)?;
+                let entries = saved.inventory().map_err(err)?;
+                let mappings = mappings
+                    .into_iter()
+                    .map(|input| {
+                        let entry = entries
+                            .iter()
+                            .find(|entry| {
+                                key(entry.root_id, &entry.relative_path) == input.source_key
+                            })
+                            .ok_or("Selected folder is not in the saved inventory.")?;
+                        Ok(Mapping {
+                            root_id: entry.root_id,
+                            source_relative: entry.relative_path.clone(),
+                            destination_relative: PathBuf::from(input.destination_relative),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                drop(saved);
+                Job::plan(&database, Path::new(&destination), &mappings).map_err(err)?
+            }
+            Work::Execute(revision) => Job::execute(&database, revision).map_err(err)?,
         };
         self.publish(&job, id, mode)?;
+        if matches!(mode, WorkerMode::Plan) {
+            return Ok(());
+        }
         loop {
             if self.inner.pause.load(Ordering::Acquire) {
-                if matches!(mode, WorkerMode::Scan) {
-                    job.pause().map_err(err)?;
-                } else {
-                    job.pause_comparison().map_err(err)?;
+                match mode {
+                    WorkerMode::Scan => {
+                        job.pause().map_err(err)?;
+                    }
+                    WorkerMode::Compare => {
+                        job.pause_comparison().map_err(err)?;
+                    }
+                    WorkerMode::Execute => {
+                        job.pause_execution().map_err(err)?;
+                    }
+                    WorkerMode::Plan => {}
                 }
                 self.publish(&job, id, mode)?;
                 break;
             }
-            let running = if matches!(mode, WorkerMode::Scan) {
-                job.step(128).map_err(err)?.state == State::Running
-            } else {
-                job.compare_step(1024 * 1024).map_err(err)?.state == ComparisonState::Running
+            let running = match mode {
+                WorkerMode::Scan => job.step(128).map_err(err)?.state == State::Running,
+                WorkerMode::Compare => {
+                    job.compare_step(1024 * 1024).map_err(err)?.state == ComparisonState::Running
+                }
+                WorkerMode::Execute => job.execute_step(1).map_err(err)?.state == "running",
+                WorkerMode::Plan => false,
             };
             self.publish(&job, id, mode)?;
             if !running {
@@ -277,7 +393,7 @@ fn valid_id(id: &str) -> Result<&str> {
 fn empty_snapshot() -> Snapshot {
     Snapshot {
         control: Control::default(),
-        observations: json!({"roots":[],"inventory_progress":null,"comparison_progress":null,"entries":[],"comparisons":[],"failures":[],"root_failures":[]}),
+        observations: json!({"roots":[],"inventory_progress":null,"comparison_progress":null,"entries":[],"comparisons":[],"failures":[],"root_failures":[],"plan":null}),
     }
 }
 fn state(value: impl std::fmt::Debug) -> String {
@@ -331,12 +447,20 @@ fn display_path(path: &Path) -> String {
 fn job_snapshot(job: &Job, id: &str) -> Result<Snapshot> {
     let p = job.progress().map_err(err)?;
     let c = job.comparison_progress().map_err(err)?;
+    let plan = job.consolidation_plan().map_err(err)?.map(|plan| json!({
+        "id":plan.id,"revision":plan.revision,"approved_revision":plan.approved_revision,
+        "destination":display_path(&plan.destination),"destination_input":plan.destination.to_str(),
+        "generation":plan.generation,"state":plan.state,
+        "mappings":plan.mappings.iter().map(|m|json!({"root_id":m.root_id,"source_key":key(m.root_id,&m.source_relative),"source_relative":display_path(&m.source_relative),"destination_relative":display_path(&m.destination_relative),"destination_input":m.destination_relative.to_str()})).collect::<Vec<_>>(),
+        "items":plan.items.iter().map(|i|json!({"id":i.id,"root_id":i.root_id,"source_key":key(i.root_id,&i.source_relative),"source_relative":display_path(&i.source_relative),"destination_relative":display_path(&i.destination_relative),"action":i.action,"included":i.included,"status":i.status,"detail":i.detail,"hash":i.hash,"contributors":i.contributors.iter().map(|c|json!({"root_id":c.root_id,"source_relative":display_path(&c.source_relative)})).collect::<Vec<_>>()})).collect::<Vec<_>>()
+    }));
     Ok(Snapshot {
         control: Control {
             job_id: Some(id.to_owned()),
             ..Control::default()
         },
         observations: json!({
+        "plan":plan,
         "roots":job.roots().map_err(err)?.into_iter().map(|r|json!({"id":r.id,"path":display_path(&r.path),"input_path":r.path.to_str()})).collect::<Vec<_>>(),
         "inventory_progress":{"state":state(p.state),"generation":p.generation,"entries":p.entries,"stale_entries":p.stale_entries,"pending_directories":p.pending_directories,"failed_directories":p.failed_directories,"failures":p.failures},
         "comparison_progress":{"state":state(c.state),"generation":c.generation,"files":c.files,"pending_files":c.pending_files,"full_hashes":c.full_hashes,"unique_sizes":c.unique_sizes,"unique_samples":c.unique_samples,"failures":c.failures,"root_failures":c.root_failures,"bytes_read":c.bytes_read},
@@ -378,6 +502,49 @@ mod shell {
     async fn desktop_pause(app: tauri::State<'_, Desktop>) -> Result<Value> {
         app.pause()
     }
+    #[tauri::command]
+    async fn desktop_plan(
+        app: tauri::State<'_, Desktop>,
+        destination: String,
+        mappings: Vec<MappingInput>,
+    ) -> Result<Value> {
+        app.plan(destination, mappings)
+    }
+    #[tauri::command]
+    async fn desktop_decide(
+        app: tauri::State<'_, Desktop>,
+        revision: i64,
+        decisions: Vec<PlanDecision>,
+    ) -> Result<Value> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.decide(revision, decisions))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_approve(app: tauri::State<'_, Desktop>, revision: i64) -> Result<Value> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.approve(revision))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_execute(app: tauri::State<'_, Desktop>, revision: i64) -> Result<Value> {
+        app.execute(revision)
+    }
+    #[tauri::command]
+    async fn desktop_open_destination(app: tauri::State<'_, Desktop>) -> Result<()> {
+        let path = app.destination()?;
+        #[cfg(target_os = "macos")]
+        let command = "open";
+        #[cfg(not(target_os = "macos"))]
+        let command = "xdg-open";
+        std::process::Command::new(command)
+            .arg(path)
+            .spawn()
+            .map_err(err)?;
+        Ok(())
+    }
     pub fn run() {
         tauri::Builder::default()
             .plugin(tauri_plugin_dialog::init())
@@ -391,7 +558,12 @@ mod shell {
                 desktop_snapshot,
                 desktop_start,
                 desktop_run,
-                desktop_pause
+                desktop_pause,
+                desktop_plan,
+                desktop_decide,
+                desktop_approve,
+                desktop_execute,
+                desktop_open_destination
             ])
             .run(tauri::generate_context!())
             .expect("Folderloom desktop could not start");

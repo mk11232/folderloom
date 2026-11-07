@@ -1128,6 +1128,13 @@ Notice 62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a: LICENSE
 Notice 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3: LICENSE-MIT
 Notice f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1: LICENSE-UNICODE
 
+unicode-normalization 0.1.26 [(MIT OR Apache-2.0) AND Unicode-3.0]
+Source: https://crates.io/api/v1/crates/unicode-normalization/0.1.26/download
+Notice 23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d: COPYRIGHT
+Notice a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2: LICENSE-APACHE
+Notice 7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0: LICENSE-MIT
+Notice f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1: LICENSE-UNICODE
+
 url 2.5.8 [MIT OR Apache-2.0]
 Source: https://crates.io/api/v1/crates/url/2.5.8/download
 Notice a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2: LICENSE-APACHE
@@ -2831,6 +2838,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+===== NOTICE 23860c2a7b5d96b21569afedf033469bab9fe14a1b24a35068b8641c578ce24d =====
+Licensed under the Apache License, Version 2.0
+<LICENSE-APACHE or
+http://www.apache.org/licenses/LICENSE-2.0> or the MIT
+license <LICENSE-MIT or http://opensource.org/licenses/MIT>,
+at your option. All files in the project carrying such
+notice may not be copied, modified, or distributed except
+according to those terms.
 
 
 ===== NOTICE 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3 =====

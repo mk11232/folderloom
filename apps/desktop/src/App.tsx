@@ -8,6 +8,8 @@ import { ancestors, buildInventoryTree, entryName, inventoryRows, latestComparis
 import type { InventoryNode } from "./inventory-tree";
 import { fullHashLocations } from "./matching-locations";
 import { MatchingLocationList } from "./MatchingLocationList";
+import { Consolidation, folderName, pathsOverlap } from "./Consolidation";
+import type { WorkspaceStep } from "./Consolidation";
 
 const stageLabels: Record<string, string> = {
   pending_sample: "Awaiting sample", sampling: "Reading sample", sampled: "Sample candidate",
@@ -43,6 +45,13 @@ export default function App() {
   const [rootFilter, setRootFilter] = useState<number | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showGaps, setShowGaps] = useState(false);
+  const [primaryDestination, setPrimaryDestination] = useState("");
+  const primaryRef = useRef("");
+  const selectPrimary = useCallback((path: string) => {
+    primaryRef.current = path; setPrimaryDestination(path);
+    setChosen(previous => previous.filter(source => !pathsOverlap(source, path)));
+  }, []);
+  const [step, setStep] = useState<WorkspaceStep>("inventory");
   const [openMatches, setOpenMatches] = useState<Set<string>>(() => new Set());
   const [expansion, setExpansion] = useState<Map<string, boolean>>(() => new Map());
   const [filteredCollapsed, setFilteredCollapsed] = useState<Set<string>>(() => new Set());
@@ -59,8 +68,8 @@ export default function App() {
       if (version !== requestVersion.current) return;
       setBootstrap(result); setSnapshot(result.snapshot);
       const allSources = [...result.manifest.roots];
-      for (const root of result.snapshot.roots) if (!allSources.some(source => root.input_path !== null ? sourceInput(source) === root.input_path : source.input_path === null && source.path === root.path)) allSources.push({ path: root.path, input_path: root.input_path, label: `Copy ${allSources.length + 1}` });
-      setSources(allSources); setChosen(allSources.map(sourceInput).filter((path): path is string => path !== null));
+      for (const root of result.snapshot.roots) if (!allSources.some(source => root.input_path !== null ? sourceInput(source) === root.input_path : source.input_path === null && source.path === root.path)) allSources.push({ path: root.path, input_path: root.input_path, label: folderName(root.path) });
+      setSources(allSources); setChosen(allSources.map(sourceInput).filter((path): path is string => path !== null && !pathsOverlap(path, primaryRef.current)));
       setSelectedKey(null); setRootFilter(null);
     } catch (e) { if (version === requestVersion.current) setError(message(e)); }
     finally { if (version === requestVersion.current) setLoading(false); }
@@ -88,8 +97,8 @@ export default function App() {
 
   async function act(action: () => Promise<Snapshot>) {
     requestVersion.current++; setBusy(true); setError(null);
-    try { setSnapshot(await action()); }
-    catch (e) { setError(message(e)); }
+    try { setSnapshot(await action()); return true; }
+    catch (e) { setError(message(e)); return false; }
     finally { setBusy(false); }
   }
   async function addFolder() {
@@ -97,8 +106,8 @@ export default function App() {
     try {
       const path = await open({ directory: true, multiple: false, title: "Choose a source folder" });
       if (typeof path === "string") {
-        if (!sources.some(source => source.path === path)) setSources(previous => [...previous, { path, label: `Copy ${previous.length + 1}` }]);
-        setChosen(previous => previous.includes(path) ? previous : [...previous, path]);
+        if (!sources.some(source => source.path === path)) setSources(previous => [...previous, { path, label: folderName(path) }]);
+        setChosen(previous => previous.includes(path) || pathsOverlap(path, primaryRef.current) ? previous : [...previous, path]);
       }
     } catch (e) { setError(message(e)); }
     finally { setBusy(false); }
@@ -112,7 +121,7 @@ export default function App() {
   const resumeInventory = snapshot?.job_id && inventory && ["paused", "running"].includes(inventory.state);
   const resumeComparison = comparison && ["paused", "running"].includes(comparison.state);
   const roots = snapshot?.roots ?? [];
-  const rootName = (id: number) => { const root = roots.find(root => root.id === id); return sources.find(source => root?.input_path ? sourceInput(source) === root.input_path : source.path === root?.path)?.label ?? `Copy ${roots.findIndex(root => root.id === id) + 1}`; };
+  const rootName = (id: number) => { const root = roots.find(root => root.id === id); return sources.find(source => root?.input_path ? sourceInput(source) === root.input_path : source.path === root?.path)?.label ?? folderName(root?.path ?? "Source folder"); };
   const records = useMemo(() => latestComparisons(snapshot?.comparisons ?? []), [snapshot?.comparisons]);
   const matchGroups = useMemo(() => fullHashLocations(snapshot?.entries ?? [], snapshot?.comparisons ?? []), [snapshot?.entries, snapshot?.comparisons]);
   const matching = (record?: Comparison) => record ? matchGroups.get(record.key) ?? [] : [];
@@ -151,7 +160,7 @@ export default function App() {
     if (!node) return;
     setQuery(""); setFilter("all"); setRootFilter(null);
     setExpansion(previous => { const next = new Map(previous); for (const parent of ancestors(node)) next.set(parent.id, true); return next; });
-    setSelectedKey(key); setRevealKey(key);
+    setStep("inventory"); setSelectedKey(key); setRevealKey(key);
   }
   const selected = snapshot?.entries.find(entry => entry.key === selectedKey);
   const selectedComparison = selected ? records.get(selected.key) : undefined;
@@ -160,38 +169,42 @@ export default function App() {
   const rootFailures = snapshot?.root_failures ?? [];
   const comparisonFailures = (snapshot?.comparisons ?? []).filter(record => record.failure);
   const currentGaps = (inventory?.failures ?? 0) + (comparison?.failures ?? 0) + (inventory?.stale_entries ?? 0);
-  const currentState = active ? (snapshot?.pause_requested ? "Saving pause…" : snapshot?.worker === "scan" ? "Scanning folders" : "Comparing contents") : recoveryRequired ? "Saved job needs recovery" : resumeComparison ? "Comparison interrupted or paused" : resumeInventory ? "Inventory interrupted or paused" : comparison && comparison.state !== "not_started" ? stateLabel(comparison.state) : inventory ? stateLabel(inventory.state) : "Ready to scan";
+  const savedPlanState = snapshot?.plan ? ({ proposed: "Merge plan ready for review", approved: "Merge plan approved", running: "Copy interrupted — resume in Results", paused: "Copy paused", complete: "Copy results ready", finished_with_errors: "Copy results need review" }[snapshot.plan.state]) : null;
+  const currentState = active ? (snapshot?.pause_requested ? "Saving pause…" : snapshot?.worker === "scan" ? "Reading folder inventory" : snapshot?.worker === "plan" ? "Building merge plan" : snapshot?.worker === "execute" ? "Copying approved additions" : "Comparing file contents") : recoveryRequired ? "Saved job needs recovery" : savedPlanState ?? (resumeComparison ? "Comparison interrupted or paused" : resumeInventory ? "Inventory interrupted or paused" : comparison && comparison.state !== "not_started" ? stateLabel(comparison.state) : inventory ? stateLabel(inventory.state) : "Ready to scan");
 
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Sources and saved job">
-      <div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong><span className="demo-label">DEMO</span></div>
+      <div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong><span className="demo-label">LOCAL</span></div>
       <div className="sidebar-heading">SOURCE FOLDERS <span>{sources.length}</span></div>
       <div className="sources">
-        {sources.map(source => { const inputPath = sourceInput(source); return <label className={`source ${chosen.includes(inputPath ?? "") ? "chosen" : ""}`} key={source.path}>
-          <input type="checkbox" checked={chosen.includes(inputPath ?? "")} disabled={blocked || inputPath === null} onChange={e => { if (inputPath !== null) setChosen(previous => e.target.checked ? [...previous, inputPath] : previous.filter(path => path !== inputPath)); }} />
-          <Folder size={17} /><span><strong>{source.label}</strong><small title={source.path}>{source.path}</small></span>
+        {sources.map(source => { const inputPath = sourceInput(source); const isPrimary = inputPath !== null && pathsOverlap(inputPath, primaryDestination); return <label className={`source ${chosen.includes(inputPath ?? "") ? "chosen" : ""}`} key={source.path}>
+          <input type="checkbox" checked={chosen.includes(inputPath ?? "")} disabled={blocked || inputPath === null || isPrimary} onChange={e => { if (inputPath !== null) setChosen(previous => e.target.checked ? [...previous, inputPath] : previous.filter(path => path !== inputPath)); }} />
+          <Folder size={17} /><span><strong>{source.label}{isPrimary && <em className="primary-source-label">Primary area</em>}</strong><small title={source.path}>{source.path}</small></span>
         </label>; })}
         {!sources.length && <p className="sidebar-empty">Choose the folders you want to inspect. Their contents stay in place.</p>}
       </div>
       <button className="add-source" disabled={blocked} onClick={() => void addFolder()}><FolderPlus size={15} /> Add folder</button>
-      <button className="new-scan" disabled={blocked || !chosen.length} onClick={() => { setSelectedKey(null); setRootFilter(null); void act(() => api.start(chosen)); }}><Play size={14} /> Scan selected folders <span>{chosen.length}</span></button>
+      <button className="new-scan" disabled={blocked || !chosen.length} onClick={() => { setSelectedKey(null); setRootFilter(null); setStep("inventory"); void act(() => api.start(chosen)); }}><Play size={14} /> Scan selected folders <span>{chosen.length}</span></button>
       <p className="sidebar-hint">Starts a new saved job. Previous job files are retained locally.</p>
       <div className="saved-job">
         <div className="sidebar-heading">CURRENT SAVED JOB</div>
         {snapshot?.job_id ? <><div className="job-line"><span className={`status-dot ${active ? "working" : ""}`} />{currentState}</div><code className="job-id" title={snapshot.job_id}>{snapshot.job_id}</code><p>{roots.length} source folders · Generation {inventory?.generation ?? "—"}</p></> : <p>No saved job yet.</p>}
         <button disabled={blocked} onClick={() => void load()}><RotateCcw size={14} /> Reopen saved job</button>
       </div>
-      <div className="local-note"><ShieldCheck size={16} /><span>Local, read-only review<small>Files stay on this Mac or connected storage.</small></span></div>
+      <div className="local-note"><ShieldCheck size={16} /><span>Your sources stay intact<small>Copy only reviewed additions to your destination.</small></span></div>
     </aside>
 
     <main>
-      <header className="toolbar"><div><div className="eyebrow">WORKSPACE</div><h1>{bootstrap?.manifest.title || "Folder comparison"}</h1></div><div className="toolbar-actions">
-        <button disabled={blocked || !snapshot?.job_id} onClick={() => void act(() => api.run("scan"))}>{resumeInventory || recoveryRequired ? <Play size={15} /> : <RefreshCw size={15} />}{recoveryRequired ? "Recover / Resume" : resumeInventory ? "Resume scan" : "Re-scan"}</button>
-        <button className="primary" disabled={blocked || !inventoryFinished} onClick={() => void act(() => api.run("compare"))}><Layers size={15} />{resumeComparison ? "Resume comparison" : "Compare contents"}</button>
-        {active && <button disabled={busy || snapshot?.pause_requested} onClick={() => void act(api.pause)}><Pause size={15} />{snapshot?.pause_requested ? "Pausing…" : "Pause"}</button>}
+      <header className="toolbar"><div><div className="eyebrow">WORKSPACE</div><h1>{bootstrap?.manifest.title || "Bring your folders together"}</h1></div><div className="toolbar-actions">
+        {step === "inventory" && <><button disabled={blocked || !snapshot?.job_id} onClick={() => void act(() => api.run("scan"))}>{resumeInventory || recoveryRequired ? <Play size={15} /> : <RefreshCw size={15} />}{recoveryRequired ? "Recover / Resume" : resumeInventory ? "Resume scan" : "Re-scan"}</button>
+        <button className="primary" disabled={blocked || !inventoryFinished} onClick={() => void act(() => api.run("compare"))}><Layers size={15} />{resumeComparison ? "Resume comparison" : "Compare contents"}</button></>}
+        {active && snapshot?.worker !== "plan" && <button disabled={busy || snapshot?.pause_requested} onClick={() => void act(api.pause)}><Pause size={15} />{snapshot?.pause_requested ? "Pausing…" : "Pause"}</button>}
       </div></header>
+      <nav className="workspace-steps" aria-label="Consolidation steps">{(["inventory", "plan", "results"] as const).map((item, index) => <button key={item} aria-current={step === item ? "step" : undefined} onClick={() => setStep(item)}><span>{index + 1}</span>{item === "inventory" ? "Inventory" : item === "plan" ? "Merge plan" : "Results"}{item === "plan" && snapshot?.plan && <small>Revision {snapshot.plan.revision}</small>}</button>)}</nav>
       {(error || snapshot?.error) && <div className="alert error" role="alert"><AlertCircle size={17} /><div><strong>Unable to finish this action</strong><p>{error || snapshot?.error}</p><small>{recoveryRequired ? "Choose Recover / Resume to recover the saved job and revalidate its sources. If recovery fails, check the reported storage or folder access problem and retry." : "Check folder access, then retry the action or reopen the saved job."}</small></div><button aria-label="Dismiss error" onClick={() => { setError(null); setSnapshot(previous => previous ? { ...previous, error: null } : previous); }}><X size={15} /></button></div>}
       {bootstrap?.configuration_error && <details className="configuration"><summary><AlertCircle size={14} /> Demo configuration unavailable — choose folders to begin</summary><p>{bootstrap.configuration_error}</p><code>{bootstrap.manifest_path}</code></details>}
+      <Consolidation snapshot={snapshot} sources={sources} onDestinationChange={selectPrimary} busy={busy || loading} step={step} rootName={rootName} act={act} onStep={setStep} onError={setError} onReveal={revealPlacement} />
+      <div className="inventory-view" hidden={step !== "inventory"}>
       <section className="progress-strip" aria-label="Saved progress" aria-busy={active}>
         <div className="progress-state">{active ? <LoaderCircle className="spin" size={19} /> : currentGaps ? <AlertCircle size={19} /> : <Check size={19} />}<span><strong>{currentState}</strong><small>{active ? "Saving progress at each checkpoint" : recoveryRequired ? "Recover / Resume revalidates the saved sources" : snapshot?.job_id ? "Saved observations · re-scan to refresh" : "Select source folders, then start a scan"}</small></span></div>
         <div className="metric"><strong>{count(inventory?.entries ?? 0)}</strong><span>entries saved</span></div>
@@ -227,7 +240,8 @@ export default function App() {
           <div className="detail-section"><h4>Content evidence</h4>{selectedComparison ? <><dl><dt>Algorithm / generation</dt><dd>{selectedComparison.algorithm.toUpperCase()} · {selectedComparison.generation}</dd><dt>Sample · {selectedComparison.sample_format}</dt><dd className="hash">{selectedComparison.sample_hash || "No completed sample"}</dd><dt>Full-content hash</dt><dd className="hash">{selectedComparison.full_hash || "No completed full hash"}</dd><dt>Content read this attempt</dt><dd>{size(selectedComparison.bytes_read)}</dd></dl><p className="evidence-note">Samples only screen candidates. Unique-size and unique-sample files remain in the inventory.</p></> : <p>{selected.entry_type === "file" ? "Run Compare contents after the scan finishes to examine this file." : "Content comparison applies to regular files. This placement remains in the inventory."}</p>}</div>
         </aside>}
       </div>
-      <footer className="workspace-footer"><span><ShieldCheck size={13} /> Read-only inventory & comparison</span><span>Samples are candidates. Full hashes are observations. Every placement is retained.</span></footer>
+      </div>
+      <footer className="workspace-footer"><span><ShieldCheck size={13} /> Local inventory & consolidation</span><span>Review the plan. Copy approved additions. Keep your sources.</span></footer>
     </main>
   </div>;
 }
