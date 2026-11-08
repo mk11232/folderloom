@@ -11,3 +11,9 @@
 - No approval or copy execution performed in this UI check. No source/output files deleted.
 
 Limits: native visual checks used the existing window size, not a full resize matrix. Matching files is an inspection view in an existing job, not standalone duplicate cleanup. Tree paging limits rendered children but the snapshot still loads in memory; this is not a large-NAS scalability claim. Claude reviewed the layout helpers and preview flow; its saved-selection finding was fixed and verified in the native reopening check.
+
+## Compact combine follow-up
+
+Combine is the default presentation; alternate arrangements use a disclosure and selector. The repeated workspace brand, large destination panel, metric blocks and stacked search labels were compacted. Full destination paths remain available through Full path.
+
+35 frontend tests and macOS production build passed. Native sample job changed from separate to combine with all three sources selected; saved revision 2 contained 219 planned items and reopened in the rebuilt app. Visually confirmed initial review shows destination tree rows at the existing window size. No copying performed.

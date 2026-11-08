@@ -237,3 +237,58 @@ main{min-width:0;display:flex;flex-direction:column;overflow:hidden}.toolbar{dis
 .workspace-title .job-context > div { position: absolute; left: 0; top: 28px; z-index: 8; width: min(600px, 70vw); max-height: 240px; overflow: auto; padding: 14px; background: #fffefa; border: 1px solid #d3ded2; border-radius: 8px; box-shadow: 0 8px 24px #294c3922; }
 .workspace-title .job-context p { align-items: flex-start; flex-wrap: wrap; }
 .workspace-title .job-context p span { flex-basis: 100%; }
+
+/* Keep the working tree above the fold; disclose setup details on demand. */
+.focused-workspace .toolbar { padding: 8px 18px; gap: 14px; }
+.workspace-title h1 { font-size: 16px; line-height: 1.3; }
+.workspace-title .job-context { padding-top: 2px; font-size: 11px; }
+.focused-workspace .workspace-steps { padding: 4px 18px; gap: 8px; }
+.focused-workspace .workspace-steps button { padding: 5px 9px; font-size: 12px; }
+.focused-workspace .primary-workspace-card { margin: 8px 18px 0; padding: 7px 10px; gap: 10px; }
+.primary-workspace-card .destination-description { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; min-width: 0; }
+.primary-workspace-card .destination-description .eyebrow { margin: 0; font-size: 10px; letter-spacing: 0; }
+.focused-workspace .primary-workspace-card h2 { margin: 0; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.destination-location { font-size: 11px; min-width: 0; }
+.destination-location summary { cursor: pointer; color: #086c68; }
+.destination-location[open] { flex-basis: 100%; }
+.destination-location p { margin: 5px 0 0; overflow-wrap: anywhere; }
+.destination-change summary { padding: 4px; font-size: 11px; }
+.focused-workspace .consolidation { padding: 12px 18px; }
+.layout-editor > summary { padding: 12px 14px; font-size: 15px; }
+.layout-editor-body { padding: 0 14px 6px; }
+.combine-explanation { font-size: 12px; line-height: 1.5; color: #52695d; margin: 0 0 8px; }
+.arrangement-options { font-size: 12px; color: #52695d; }
+.arrangement-options summary { cursor: pointer; color: #086c68; }
+.arrangement-options label { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.arrangement-options select { max-width: 100%; font-size: 12px; }
+.arrangement-options p { line-height: 1.6; margin-bottom: 10px; }
+.merge-flow { margin: 12px 0; }
+.merge-source { padding: 8px 10px; margin-bottom: 5px; }
+.merge-output { padding: 12px; }
+.focused-workspace .plan-summary { padding: 10px 14px; }
+.preview-controls { padding: 10px 14px; }
+.preview-root { padding: 10px 14px 6px; }
+.preview-help { padding: 0 14px 8px; }
+@media (max-width: 800px) {
+ .focused-workspace .toolbar { padding: 8px 12px; gap: 8px; }
+ .focused-workspace .toolbar-actions:empty { display: none; }
+ .focused-workspace .primary-workspace-card { margin: 6px 12px 0; }
+ .focused-workspace .consolidation { padding: 10px 12px; }
+ .layout-editor > summary small { display: none; }
+}
+
+.focused-workspace .plan-review > .section-heading { padding: 9px 14px; }
+.focused-workspace .plan-review > .section-heading h2 { font-size: 16px; }
+.focused-workspace .plan-review > .section-heading p { margin-top: 4px; font-size: 11px; }
+.focused-workspace .plan-summary { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 8px 14px; }
+.focused-workspace .plan-summary > div { display: flex; flex-direction: row; align-items: baseline; gap: 5px; }
+.focused-workspace .plan-summary strong { font-size: 15px; letter-spacing: 0; }
+.focused-workspace .plan-summary span { font-size: 11px; }
+.preview-controls { padding: 8px 14px; align-items: center; }
+.preview-controls label { flex-direction: row; align-items: center; gap: 8px; white-space: nowrap; }
+.preview-controls input { padding: 6px 8px; }
+.preview-controls select { min-height: 30px; }
+.preview-root strong { font-size: 14px; }
+.focused-workspace .workspace-footer { display: none; }
+.focused-workspace .job-step-actions { padding: 5px 18px; }
+.focused-workspace .mapping-editor { margin-bottom: 10px; }
