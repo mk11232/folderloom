@@ -30,7 +30,7 @@ test("review displays exact source and output paths, actions, and revision-speci
   const html = render({ snapshot: { ...snapshot, plan } });
   assert.match(html, /\/synthetic\/Family\/report-1.pdf/);
   assert.match(html, /\/synthetic\/Primary\/Documents\/report-1.pdf/);
-  for (const text of ["Copy to this location", "Already here — no copy", "Needs review", "Approve revision 4", "Source changed; rebuild the plan."]) assert.ok(html.includes(text), text);
+  for (const text of ["Copy to this location", "Already here — verify only", "Needs review", "Approve revision 4", "Source changed; rebuild the plan."]) assert.ok(html.includes(text), text);
   assert.match(html, /Planned additions have not yet been copied/);
   assert.match(html, /Resolve the flagged mappings or exclude blocked items before approval/);
   assert.doesNotMatch(html, /Copy approved additions/);

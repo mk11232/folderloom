@@ -25,3 +25,9 @@ Default plan preview now lists files with relative destination paths, inclusion 
 38 frontend tests passed, including photos/photo1.jpg and photos/photos/photo1.jpg sharing a hash while photos/ph/photo1.jpg has different contents. The test asserts three destination locations remain. Production native build passed. Installed demo reopened revision 2 and displayed same-name/different-content outcomes and inclusion without opening details. No copying executed.
 
 User review rejected stacked file blocks. Final default view is a data table: Include, File/destination location, Sources, Content match, What happens. Named source roots are visible, and same/different relationships link to numbered rows. Native installed screenshot confirmed compact rows; 38 tests pass. No copy-engine changes or source writes.
+
+## Related-file comparison (2026-11-08)
+
+Compare now keeps the selected file and all related saved-plan files together: matching hashes across locations, or the same source filename with different hashes. The selected row stays first and highlighted. Relationships use item IDs rather than matching escaped destination strings. Show all files exits comparison. Search and outcome filters are disabled during comparison to avoid silently omitting a version. Sorting by path or outcome remains available.
+
+Existing destination items now distinguish verification from exclusion: excluding them leaves them unchanged. Toolbar controls are consolidated and long cells wrap. 40 frontend tests passed, including the three-photo example, colliding display paths and existing-file outcomes. Native production build passed. Live app: searched Decline Rep.docx, selected Compare on the original, observed all three versions with Selected file/Different contents and their source/output paths. Final installed rendering verified complete labels without clipping. No copies or file deletions.
