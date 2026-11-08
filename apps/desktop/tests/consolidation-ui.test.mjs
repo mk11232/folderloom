@@ -22,7 +22,7 @@ test("new mapping candidates are unselected and cannot silently start a copy", (
   assert.match(html, /Include folder Backup/);
   assert.doesNotMatch(html, /type="checkbox"[^>]*checked=""/);
   assert.match(html, /0 folders selected/);
-  assert.match(html, /<button class="primary" disabled=""[^>]*>[\s\S]*?Preview combined folder/);
+  assert.match(html, /<button class="primary" disabled=""[^>]*>[\s\S]*?Preview destination/);
   assert.doesNotMatch(html, /Copy approved additions/);
 });
 
@@ -90,7 +90,7 @@ test("destination controls are available during arrangement and hidden on the sc
   assert.match(card, /aria-label="Primary destination"/);
   assert.doesNotMatch(card, /hidden=/);
   assert.match(card, /Choose existing folder…/);
-  assert.match(card, /Choose an existing folder, including one already listed as a source/);
+  assert.match(card, /Choose an existing or empty folder/);
   assert.match(card, /aria-label="Choose a listed folder as primary destination"/);
   assert.match(card, /value="\/synthetic\/Family"/);
   assert.match(card, /value="\/synthetic\/Backup"/);
@@ -111,13 +111,13 @@ test("primary selection excludes overlapping incoming mappings without confusing
 
 test("folder arrangement offers concrete output choices and keeps custom mappings secondary", () => {
   const html = render();
-  for (const text of ["Combine contents", "Keep each folder separate", "Combine example", "Separate example", "Folders to include", "ARRANGEMENT PREVIEW", "Preview combined folder"]) assert.ok(html.includes(text), text);
+  for (const text of ["Combine contents", "Keep each folder separate", "Folder arrangement", "Folders to include", "WHERE FILES WILL GO", "Preview destination"]) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /Source folder for mapping/);
 });
 
 test("saved review uses destination folders instead of a source-destination table", () => {
   const html = render({ snapshot: { ...snapshot, plan } });
-  assert.match(html, /Your combined folder/);
+  assert.match(html, /Destination preview/);
   assert.match(html, /class="preview-folder" open=""/);
   assert.match(html, /Exact destination/);
   assert.match(html, /Include this item in the copy/);
