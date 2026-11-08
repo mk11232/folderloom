@@ -11,6 +11,7 @@ import { Consolidation, folderName } from "./Consolidation";
 import type { WorkspaceStep } from "./Consolidation";
 import { JobsHome } from "./JobsHome";
 import { JobWizard } from "./JobWizard";
+import { DuplicateGroups } from "./DuplicateGroups";
 import { emptySetup, resumeStep } from "./job-workflow";
 
 const stageLabels: Record<string, string> = {
@@ -53,6 +54,7 @@ export default function App() {
   const [rootFilter, setRootFilter] = useState<number | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [showGaps, setShowGaps] = useState(false);
+  const [inspection, setInspection] = useState<"overview" | "files" | "matches">("overview");
   const [primaryDestination, setPrimaryDestination] = useState("");
   const selectPrimary = useCallback((path: string) => setPrimaryDestination(path), []);
   const [step, setStep] = useState<WorkspaceStep>("inventory");
@@ -85,7 +87,7 @@ export default function App() {
   }, []);
   useEffect(() => { void load(); return () => { requestVersion.current++; }; }, [load]);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key === "f") { event.preventDefault(); searchRef.current?.focus(); } };
+    const onKey = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key === "f") { event.preventDefault(); setStep("inventory"); setInspection("files"); requestAnimationFrame(() => searchRef.current?.focus()); } };
     window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
   }, []);
   // Only one in-flight poll. A command invalidates older responses so a pause/start
@@ -112,6 +114,7 @@ export default function App() {
     finally { setBusy(false); }
   }
   function resetJobView(next: Snapshot) {
+    setInspection("overview");
     setSnapshot(next); setSelectedKey(null); setRootFilter(null); setQuery(""); setFilter("all");
     setRevealKey(null); setShowGaps(false); setOpenMatches(new Set()); setExpansion(new Map()); setFilteredCollapsed(new Set());
     setPrimaryDestination(next.plan?.destination_input ?? next.setup?.destination ?? "");
@@ -224,7 +227,7 @@ export default function App() {
     if (!node) return;
     setQuery(""); setFilter("all"); setRootFilter(null);
     setExpansion(previous => { const next = new Map(previous); for (const parent of ancestors(node)) next.set(parent.id, true); return next; });
-    setStep("inventory"); setSelectedKey(key); setRevealKey(key);
+    setStep("inventory"); setInspection("files"); setSelectedKey(key); setRevealKey(key);
   }
   const selected = snapshot?.entries.find(entry => entry.key === selectedKey);
   const selectedComparison = selected ? records.get(selected.key) : undefined;
@@ -236,28 +239,18 @@ export default function App() {
   const savedPlanState = snapshot?.plan ? ({ proposed: "Merge plan ready for review", approved: "Merge plan approved", running: "Copy interrupted — resume in Results", paused: "Copy paused", complete: "Copy results ready", finished_with_errors: "Copy results need review" }[snapshot.plan.state]) : null;
   const currentState = active ? (snapshot?.pause_requested ? "Saving pause…" : snapshot?.worker === "scan" ? "Reading folder inventory" : snapshot?.worker === "plan" ? "Building merge plan" : snapshot?.worker === "execute" ? "Copying approved additions" : "Comparing file contents") : recoveryRequired ? "Saved job needs recovery" : savedPlanState ?? (resumeComparison ? "Comparison interrupted or paused" : resumeInventory ? "Inventory interrupted or paused" : comparison && comparison.state !== "not_started" ? stateLabel(comparison.state) : inventory ? stateLabel(inventory.state) : "Ready to scan");
 
-  if (screen !== "job") return <div className="app-shell jobs-shell"><aside className="sidebar"><div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong></div><p className="sidebar-hint">Local jobs. Saved progress. Sources stay intact.</p><div className="local-note"><ShieldCheck size={17} /><span>On your computer<small>No account needed.</small></span></div></aside>{screen === "home" ? <JobsHome jobs={jobs} loading={loading} busy={busy} workingJob={snapshot?.worker ? snapshot.job_id : jobs.find(job => job.active)?.id ?? null} error={homeError || error} hasDraft={Boolean(draft)} onNew={() => void beginSetup(emptySetup())} onDraft={() => { if (draft) void beginSetup(draft); }} onOpen={id => void openJob(id)} onRefresh={() => void refreshJobs()} onArchive={(id, archived) => void setJobArchived(id, archived)} onDelete={deleteJob} onDiscardDraft={() => void cancelSetup().catch(failure => setError(message(failure)))} /> : <><JobWizard key={wizardKey} initial={wizardSetup} busy={busy} onCancel={cancelSetup} onSaveClose={() => void showHome()} onStart={createJob} />{error && <div className="wizard-external-error alert error" role="alert">{error}</div>}</>}</div>;
+  if (screen !== "job") return <div className="app-shell jobs-shell">{screen === "home" ? <JobsHome jobs={jobs} loading={loading} busy={busy} workingJob={snapshot?.worker ? snapshot.job_id : jobs.find(job => job.active)?.id ?? null} error={homeError || error} hasDraft={Boolean(draft)} onNew={() => void beginSetup(emptySetup())} onDraft={() => { if (draft) void beginSetup(draft); }} onOpen={id => void openJob(id)} onRefresh={() => void refreshJobs()} onArchive={(id, archived) => void setJobArchived(id, archived)} onDelete={deleteJob} onDiscardDraft={() => void cancelSetup().catch(failure => setError(message(failure)))} /> : <><JobWizard key={wizardKey} initial={wizardSetup} busy={busy} onCancel={cancelSetup} onSaveClose={() => void showHome()} onStart={createJob} />{error && <div className="wizard-external-error alert error" role="alert">{error}</div>}</>}</div>;
 
-  return <div className="app-shell">
-    <aside className="sidebar" aria-label="Job sources and saved progress">
-      <div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong></div>
-      <button className="back-to-jobs" disabled={busy} onClick={() => void showHome()}>← All jobs</button>
-      <div className="sidebar-heading">SAVED SOURCE FOLDERS <span>{roots.length}</span></div>
-      <div className="sources">{roots.map(root => <div className="source" key={root.id}><Folder size={17} /><span><strong>{rootName(root.id)}</strong><small title={root.path}>{root.path}</small></span></div>)}</div>
-      <p className="sidebar-hint">Sources are fixed for this saved job. To add or remove folders, use its setup for a new job.</p>
-      <button disabled={blocked} onClick={() => void cloneJob()}>Use as new job</button>
-      <div className="saved-job"><div className="sidebar-heading">CURRENT JOB</div><div className="job-line"><span className={`status-dot ${active ? "working" : ""}`} />{currentState}</div><p>{snapshot?.setup?.name || "Saved folder job"}</p><code className="job-id" title={snapshot?.job_id ?? ""}>{snapshot?.job_id}</code><p>{roots.length} source folders · Generation {inventory?.generation ?? "—"}</p></div>
-      <div className="local-note"><ShieldCheck size={16} /><span>Your sources stay intact<small>Copy only reviewed additions to your destination.</small></span></div>
-    </aside>
-
+  return <div className="app-shell focused-workspace">
     <main>
-      <header className="toolbar"><div><div className="eyebrow">WORKSPACE</div><h1>{snapshot?.setup?.name || "Saved folder job"}</h1></div><div className="toolbar-actions">
+      <header className="toolbar"><button className="workspace-home" disabled={busy} onClick={() => void showHome()}><img src={folderloomIcon} alt="" />All jobs</button><div className="workspace-title"><div className="eyebrow">FOLDERLOOM</div><h1>{snapshot?.setup?.name || "Saved folder job"}</h1><details className="job-context"><summary>{roots.length} source folders · View locations and job setup</summary><div>{roots.map(root => <p key={root.id}><Folder size={15} /><strong>{rootName(root.id)}</strong><span>{root.path}</span></p>)}<button disabled={blocked} onClick={() => void cloneJob()}>Use as new job</button></div></details></div><div className="toolbar-actions">
         {step === "inventory" && <><button disabled={blocked || !snapshot?.job_id} onClick={() => void act(() => api.run("scan"))}>{resumeInventory || recoveryRequired ? <Play size={15} /> : <RefreshCw size={15} />}{recoveryRequired ? "Recover / Resume" : resumeInventory ? "Resume scan" : "Re-scan"}</button>
         <button className="primary" disabled={blocked || !inventoryFinished} onClick={() => void act(() => api.run("compare"))}><Layers size={15} />{resumeComparison ? "Resume comparison" : "Compare contents"}</button></>}
         {active && snapshot?.worker !== "plan" && <button disabled={busy || snapshot?.pause_requested} onClick={() => void act(api.pause)}><Pause size={15} />{snapshot?.pause_requested ? "Pausing…" : "Pause"}</button>}
       </div></header>
-      <nav className="workspace-steps" aria-label="Consolidation steps"><span className="completed-step">1 Sources</span><span className="completed-step">2 Destination</span>{(["inventory", "plan", "results"] as const).map((item, index) => <button key={item} disabled={item === "plan" ? !snapshot?.plan && inventory?.state !== "complete" : item === "results" ? !snapshot?.plan : false} aria-current={step === item ? "step" : undefined} onClick={() => setStep(item)}><span>{index + 3}</span>{item === "inventory" ? "Scan & compare" : item === "plan" ? "Merge plan" : "Results"}{item === "plan" && snapshot?.plan && <small>Revision {snapshot.plan.revision}</small>}</button>)}</nav>
+      <nav className="workspace-steps" aria-label="Consolidation steps">{(["inventory", "plan", "results"] as const).map((item, index) => <button key={item} disabled={item === "plan" ? !snapshot?.plan && inventory?.state !== "complete" : item === "results" ? !snapshot?.plan : false} aria-current={step === item ? "step" : undefined} onClick={() => setStep(item)}><span>{index + 1}</span>{item === "inventory" ? "Scan folders" : item === "plan" ? "Arrange & review" : "Copy results"}{item === "plan" && snapshot?.plan && <small>Revision {snapshot.plan.revision}</small>}</button>)}</nav>
       {(error || snapshot?.error) && <div className="alert error" role="alert"><AlertCircle size={17} /><div><strong>Unable to finish this action</strong><p>{error || snapshot?.error}</p><small>{recoveryRequired ? "Choose Recover / Resume to recover the saved job and revalidate its sources. If recovery fails, check the reported storage or folder access problem and retry." : "Check folder access, then retry the action or reopen the saved job."}</small></div><button aria-label="Dismiss error" onClick={() => { setError(null); setSnapshot(previous => previous ? { ...previous, error: null } : previous); }}><X size={15} /></button></div>}
+
       <Consolidation snapshot={snapshot} sources={sources} onDestinationChange={selectPrimary} busy={busy || loading} step={step} rootName={rootName} act={act} onStep={setStep} onError={setError} onReveal={revealPlacement} />
       <div className="inventory-view" hidden={step !== "inventory"}>
       <section className="progress-strip" aria-label="Saved progress" aria-busy={active}>
@@ -265,10 +258,14 @@ export default function App() {
         <div className="metric"><strong>{count(inventory?.entries ?? 0)}</strong><span>entries saved</span></div>
         <div className="metric"><strong>{count(comparison?.full_hashes ?? 0)}</strong><span>full hashes</span></div>
         <div className="metric"><strong>{count((comparison?.unique_sizes ?? 0) + (comparison?.unique_samples ?? 0))}</strong><span>unique candidates</span></div>
-        <button className={`gap-count ${currentGaps ? "has-gaps" : ""}`} disabled={!failures.length && !rootFailures.length && !comparisonFailures.length && !currentGaps} onClick={() => { setShowGaps(value => !value); if (inventory?.stale_entries) setFilter("attention"); }}><strong>{count(currentGaps)}</strong><span>gaps / stale <ChevronRight size={12} /></span></button>
+        <button className={`gap-count ${currentGaps ? "has-gaps" : ""}`} disabled={!failures.length && !rootFailures.length && !comparisonFailures.length && !currentGaps} onClick={() => { setInspection("files"); setShowGaps(value => !value); if (inventory?.stale_entries) setFilter("attention"); }}><strong>{count(currentGaps)}</strong><span>gaps / stale <ChevronRight size={12} /></span></button>
       </section>
       {(active || comparison?.bytes_read) ? <div className="work-progress"><span>{snapshot?.worker === "scan" ? `${count(inventory?.pending_directories ?? 0)} folders awaiting enumeration` : `${count(comparison?.pending_files ?? 0)} files awaiting comparison`}</span><span>{size(comparison?.bytes_read ?? 0)} content read{inventory?.failed_directories ? ` · ${inventory.failed_directories} incomplete folders` : ""}</span></div> : null}
       {showGaps && <section className="gap-panel" aria-label="Recorded failures"><div className="gap-heading"><strong>Recorded gaps and failures</strong><button onClick={() => setShowGaps(false)} aria-label="Close failures"><X size={14} /></button></div><p>Restore access and re-scan to create fresh observations. Earlier-generation failures remain as history.</p>{!failures.length && !rootFailures.length && !comparisonFailures.length && <p>Stale entries are shown in the Needs attention filter below.</p>}{rootFailures.map((failure, index) => <div className="failure-row" key={`root-${index}`}><strong>{rootName(failure.root_id)} · root comparison gap</strong><span>{failure.message}</span><small>Generation {failure.generation}{failure.stale ? " · stale" : ""}</small></div>)}{comparisonFailures.map(failure => <div className="failure-row" key={`comparison-${failure.key}-${failure.generation}`}><strong>{rootName(failure.root_id)} / {failure.relative_path} · content read</strong><span>{failure.failure}</span><small>Generation {failure.generation}{failure.stale ? " · historical / stale" : ""}</small></div>)}{failures.map((failure, index) => <div className="failure-row" key={`file-${index}`}><strong>{rootName(failure.root_id)} / {failure.relative_path || "(source root)"}</strong><span>{failure.message}</span><small>Generation {failure.generation}{failure.generation !== inventory?.generation ? " · historical" : ""}</small></div>)}</section>}
+      <div className="inspection-switch" aria-label="Scan views"><button aria-pressed={inspection === "overview"} onClick={() => setInspection("overview")}>Overview</button><button aria-pressed={inspection === "matches"} onClick={() => setInspection("matches")}>Matching files</button><button aria-pressed={inspection === "files"} onClick={() => setInspection("files")}>Browse all files</button></div>
+      {inspection === "overview" && <section className="scan-overview"><h2>{inventory?.state === "complete" ? "Your folders are ready to arrange" : active ? "Reading your folders" : "Finish the scan to arrange your folders"}</h2><p>Choose how the folders fit together, then inspect the destination preview. You do not need to work through every file in the inventory.</p><div className="scan-paths">{roots.map(root => <div key={root.id}><Folder size={24} /><strong>{rootName(root.id)}</strong><small>{root.path}</small></div>)}</div><button className="primary" disabled={blocked || inventory?.state !== "complete"} onClick={() => setStep("plan")}>Arrange folders <ChevronRight size={16} /></button><p className="scan-secondary">Only interested in matching files? Use <button onClick={() => setInspection("matches")}>Matching files</button> to inspect content matches without copying.</p></section>}
+      {inspection === "matches" && <div className="matching-view"><p className="match-evidence-note">{active ? "Comparison or inventory is still running; these results may be partial." : comparison?.state === "complete" ? "Saved comparison results. Re-scan and compare again to check for changes." : "Comparison is incomplete or has gaps. These groups do not establish a complete duplicate search."}</p><DuplicateGroups groups={matchGroups} roots={roots} onReveal={revealPlacement} /></div>}
+      <div className="inventory-browser" hidden={inspection !== "files"}>
       <div className="inventory-toolbar"><div className="inventory-title"><h2>Folder inventory</h2><span>{count(visible.length)} {filtering ? "matching placements" : "placements"}</span></div><label className="search"><Search size={15} /><input ref={searchRef} type="search" placeholder="Search paths…" aria-label="Search inventory paths" value={query} onChange={e => setQuery(e.target.value)} /><kbd>⌘ F</kbd></label><select aria-label="Filter inventory" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All entries</option><option value="files">Files only</option><option value="matches">Full-hash matches</option><option value="unique">Unique candidates</option><option value="attention">Needs attention</option></select><select aria-label="Filter source folder" value={rootFilter ?? "all"} onChange={e => setRootFilter(e.target.value === "all" ? null : Number(e.target.value))}><option value="all">All sources</option>{roots.map(root => <option key={root.id} value={root.id}>{rootName(root.id)}</option>)}</select></div>
       <div className={`inventory-workbench ${selected ? "with-details" : ""}`}>
         <div className="table-region"><div className="tree-toolbar"><span>{filtering ? "Matching entries with their parent folders" : "Open a folder to explore its saved contents"}</span><div><button onClick={() => expandAll(true)} disabled={!rows.length}>Expand all</button><button onClick={() => expandAll(false)} disabled={!rows.length}>Collapse all</button></div></div><div className="table-scroll"><table aria-label="Folder inventory"><thead><tr><th>Folder / file</th><th>Source</th><th className="numeric">Size</th><th>Evidence / stage</th></tr></thead><tbody>{rows.map(({ node, depth }) => {
@@ -296,7 +293,8 @@ export default function App() {
         </aside>}
       </div>
       </div>
-      <div className="job-step-actions"><button disabled={busy} onClick={() => step === "inventory" ? void showHome() : setStep(step === "results" ? "plan" : "inventory")}>← {step === "inventory" ? "All jobs" : step === "results" ? "Back to merge plan" : "Back to scan & compare"}</button>{step === "inventory" ? <button className="primary" disabled={blocked || inventory?.state !== "complete"} onClick={() => setStep("plan")}>Next: merge plan <ChevronRight size={14} /></button> : step === "plan" && snapshot?.plan ? <button disabled={busy} onClick={() => setStep("results")}>View results <ChevronRight size={14} /></button> : null}</div>
+      </div>
+      <div className="job-step-actions"><button disabled={busy} onClick={() => step === "inventory" ? void showHome() : setStep(step === "results" ? "plan" : "inventory")}>← {step === "inventory" ? "All jobs" : step === "results" ? "Back to review" : "Back to scan"}</button>{step === "inventory" ? <button className="primary" disabled={blocked || inventory?.state !== "complete"} onClick={() => setStep("plan")}>Arrange folders <ChevronRight size={14} /></button> : step === "plan" && snapshot?.plan ? <button disabled={busy} onClick={() => setStep("results")}>View results <ChevronRight size={14} /></button> : null}</div>
       <footer className="workspace-footer"><span><ShieldCheck size={13} /> Local inventory & consolidation</span><span>Review the plan. Copy approved additions. Keep your sources.</span></footer>
     </main>
   </div>;

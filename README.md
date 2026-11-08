@@ -14,8 +14,8 @@ Folderloom opens to **Jobs**, a table of saved scans and consolidation jobs. Ope
 
 1. **Sources:** name the job and add its source folders. **Remove** only removes a folder from this setup; it never deletes files. Unstarted setup with entered choices is saved locally as a draft. **Save & close** keeps it for later; **Cancel setup** discards it. Empty setups do not create a pending draft.
 2. **Primary destination:** choose an existing folder, empty or populated, or use a listed folder as primary. Its contents stay in place. The primary is excluded from incoming sources.
-3. **Scan and compare:** start the scan, expand folders to explore their files, and compare contents. Matching-location dropdowns show every observed matching placement. Pause and resume saved work as needed.
-4. **Merge plan:** choose incoming folders and target subfolders, build the plan, and review every exact output path. Exclude unwanted items and approve the displayed revision. Matching contents at the same output path share one placement; differing contents get previewed conflict names.
+3. **Scan folders:** start with a folder overview. **Browse all files** opens the detailed inventory; compare contents and use **Matching files** to inspect groups of matching content. Pause and resume saved work as needed.
+4. **Arrange & review:** choose **Combine contents** or **Keep each folder separate**, select source folders, and preview the destination tree. Custom subfolder mappings remain available under the advanced choice. Expand a file to review its exact source and output paths. Exclude unwanted items and approve the displayed revision. Matching contents at the same output path share one placement; differing contents get previewed conflict names.
 5. **Results:** copy approved additions and inspect verified files, folders, exceptions and excluded items. Retry or resume unfinished work. **Open destination** opens the output folder.
 
 A started job retains its scanned source set and history. Choose **Use as new job** to change or remove sources without rewriting that job's evidence. **Jobs** returns to the saved-job table. Only one filesystem operation runs at a time.
@@ -66,7 +66,7 @@ Open `target/release/bundle/macos/Folderloom Demo.app` from the repository root,
 
 ## Where this is going
 
-This build uses explicitly selected manual folder mappings. Automatic folder-matching suggestions, richer snapshot-preservation behavior, and separately reviewed cleanup/recovery remain future work. Links and unsupported entries are held visibly. Directory metadata preservation is limited; inspect the per-item details. Regular-file metadata is copied on macOS, including extended attributes such as quarantine. Byte verification is not malware scanning. See the [consolidation workflow and limits](docs/consolidation-workflow.md).
+This build offers two folder arrangement presets and explicitly selected custom mappings. Matching-file groups are an inspection view within an existing job, not a separate duplicate-cleanup mode. Automatic folder-matching suggestions, richer snapshot-preservation behavior, and separately reviewed cleanup/recovery remain future work. Links and unsupported entries are held visibly. Directory metadata preservation is limited; inspect the per-item details. Regular-file metadata is copied on macOS, including extended attributes such as quarantine. Byte verification is not malware scanning. See the [consolidation workflow and limits](docs/consolidation-workflow.md).
 
 The shared Rust engine drives both the desktop app and development CLI. Folderloom uses its own workflow and established libraries; it is not a Czkawka fork.
 
