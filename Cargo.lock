@@ -856,6 +856,7 @@ name = "folderloom-desktop"
 version = "2026.11.3"
 dependencies = [
  "folderloom-core",
+ "fs2",
  "rusqlite",
  "serde",
  "serde_json",

@@ -45,5 +45,9 @@ export function createDraftWriter(write: (setup: JobSetup) => Promise<void>) {
       return pending;
     },
     flush() { return pending; },
+    discard(remove: () => Promise<void>) {
+      pending = pending.catch(() => undefined).then(remove);
+      return pending;
+    },
   };
 }

@@ -129,6 +129,22 @@ export default function App() {
     const failures = results.flatMap((result, index) => result.status === "rejected" ? [`${index ? "Unfinished setup" : "Job list"}: ${message(result.reason)}`] : []);
     setHomeError(failures.length ? failures.join(" · ") : null); setLoading(false);
   }
+  async function setJobArchived(id: string, archived: boolean) {
+    setBusy(true); setError(null); setHomeError(null);
+    try { await api.setJobArchived(id, archived); await refreshJobs(); }
+    catch (failure) { setError(message(failure)); }
+    finally { setBusy(false); }
+  }
+  async function deleteJob(id: string) {
+    setBusy(true); setError(null); setHomeError(null);
+    try { setSnapshot(await api.deleteJob(id)); await refreshJobs(); }
+    finally { setBusy(false); }
+  }
+  async function cancelSetup() {
+    setBusy(true); setError(null);
+    try { await api.clearDraft(); setDraft(null); await showHome(); }
+    finally { setBusy(false); }
+  }
   async function showHome() { setScreen("home"); await refreshJobs(); }
   async function openJob(id: string) {
     catalogVersion.current++; setLoading(false); setHomeError(null);
@@ -220,7 +236,7 @@ export default function App() {
   const savedPlanState = snapshot?.plan ? ({ proposed: "Merge plan ready for review", approved: "Merge plan approved", running: "Copy interrupted — resume in Results", paused: "Copy paused", complete: "Copy results ready", finished_with_errors: "Copy results need review" }[snapshot.plan.state]) : null;
   const currentState = active ? (snapshot?.pause_requested ? "Saving pause…" : snapshot?.worker === "scan" ? "Reading folder inventory" : snapshot?.worker === "plan" ? "Building merge plan" : snapshot?.worker === "execute" ? "Copying approved additions" : "Comparing file contents") : recoveryRequired ? "Saved job needs recovery" : savedPlanState ?? (resumeComparison ? "Comparison interrupted or paused" : resumeInventory ? "Inventory interrupted or paused" : comparison && comparison.state !== "not_started" ? stateLabel(comparison.state) : inventory ? stateLabel(inventory.state) : "Ready to scan");
 
-  if (screen !== "job") return <div className="app-shell jobs-shell"><aside className="sidebar"><div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong></div><p className="sidebar-hint">Local jobs. Saved progress. Sources stay intact.</p><div className="local-note"><ShieldCheck size={17} /><span>On your computer<small>No account needed.</small></span></div></aside>{screen === "home" ? <JobsHome jobs={jobs} loading={loading} busy={busy} workingJob={snapshot?.worker ? snapshot.job_id : jobs.find(job => job.active)?.id ?? null} error={homeError || error} hasDraft={Boolean(draft)} onNew={() => void beginSetup(emptySetup())} onDraft={() => { if (draft) void beginSetup(draft); }} onOpen={id => void openJob(id)} onRefresh={() => void refreshJobs()} /> : <><JobWizard key={wizardKey} initial={wizardSetup} busy={busy} onCancel={() => void showHome()} onStart={createJob} />{error && <div className="wizard-external-error alert error" role="alert">{error}</div>}</>}</div>;
+  if (screen !== "job") return <div className="app-shell jobs-shell"><aside className="sidebar"><div className="brand"><span className="brand-mark"><img src={folderloomIcon} alt="" /></span><strong>Folderloom</strong></div><p className="sidebar-hint">Local jobs. Saved progress. Sources stay intact.</p><div className="local-note"><ShieldCheck size={17} /><span>On your computer<small>No account needed.</small></span></div></aside>{screen === "home" ? <JobsHome jobs={jobs} loading={loading} busy={busy} workingJob={snapshot?.worker ? snapshot.job_id : jobs.find(job => job.active)?.id ?? null} error={homeError || error} hasDraft={Boolean(draft)} onNew={() => void beginSetup(emptySetup())} onDraft={() => { if (draft) void beginSetup(draft); }} onOpen={id => void openJob(id)} onRefresh={() => void refreshJobs()} onArchive={(id, archived) => void setJobArchived(id, archived)} onDelete={deleteJob} onDiscardDraft={() => void cancelSetup().catch(failure => setError(message(failure)))} /> : <><JobWizard key={wizardKey} initial={wizardSetup} busy={busy} onCancel={cancelSetup} onSaveClose={() => void showHome()} onStart={createJob} />{error && <div className="wizard-external-error alert error" role="alert">{error}</div>}</>}</div>;
 
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Job sources and saved progress">

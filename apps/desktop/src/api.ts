@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type JobSetup = { name: string; sources: { label: string; path: string }[]; destination: string };
-export type JobSummary = { id: string; name: string; created_ms: number; updated_ms: number; source_count: number; entry_count: number; state: string; stage: "inventory" | "plan" | "results"; destination: string | null; error: string | null; active: boolean };
+export type JobSummary = { id: string; name: string; created_ms: number; updated_ms: number; source_count: number; entry_count: number; state: string; stage: "inventory" | "plan" | "results"; destination: string | null; error: string | null; active: boolean; archived: boolean };
 export type Source = { label: string; path: string; input_path?: string | null };
 export type Entry = { key: string; parent_key: string | null; root_id: number; relative_path: string; entry_type: "file" | "directory" | "symlink" | "other"; size: number; modified_ns: string | null; link_target: string | null; excluded: boolean; stale: boolean; directory_complete: boolean };
 export type Comparison = { key: string; root_id: number; relative_path: string; generation: number; size: number; stage: string; algorithm: string; sample_format: string; sample_hash: string | null; full_hash: string | null; bytes_read: number; failure: string | null; stale: boolean };
@@ -19,8 +19,21 @@ export type Snapshot = {
   failures: { root_id: number; relative_path: string; message: string; generation: number }[];
   root_failures: { root_id: number; generation: number; message: string; stale: boolean }[];
 };
+export type QuitStatus = {
+  phase: "idle" | "confirming" | "waiting" | "failed" | "exiting";
+  request: number;
+  worker: Snapshot["worker"];
+  error: string | null;
+};
 export type Bootstrap = { manifest: { title: string; description: string; roots: Source[] }; manifest_path: string; configuration_error: string | null; snapshot: Snapshot };
 export const api = {
+  quitStatus: () => invoke<QuitStatus>("desktop_quit_status"),
+  confirmQuit: (request: number) => invoke<QuitStatus>("desktop_confirm_quit", { request }),
+  cancelQuit: (request: number) => invoke<QuitStatus>("desktop_cancel_quit", { request }),
+  finishQuit: (request: number) => invoke<boolean>("desktop_finish_quit", { request }),
+  clearDraft: () => invoke<void>("desktop_clear_draft"),
+  deleteJob: (jobId: string) => invoke<Snapshot>("desktop_delete_job", { jobId }),
+  setJobArchived: (jobId: string, archived: boolean) => invoke<void>("desktop_set_job_archived", { jobId, archived }),
   jobs: () => invoke<JobSummary[]>("desktop_jobs"),
   openJob: (jobId: string) => invoke<Snapshot>("desktop_open_job", { jobId }),
   createJob: (setup: JobSetup) => invoke<Snapshot>("desktop_create_job", { setup }),

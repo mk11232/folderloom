@@ -27,6 +27,8 @@ struct Inner {
     data: PathBuf,
     snapshot: Mutex<Snapshot>,
     pause: AtomicBool,
+    // Lock before snapshot whenever both are needed. Shares admission with launch.
+    quit: Mutex<QuitLifecycle>,
 }
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +37,39 @@ enum WorkerMode {
     Compare,
     Plan,
     Execute,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum QuitPhase {
+    #[default]
+    Idle,
+    Confirming,
+    Waiting,
+    Failed,
+    Exiting,
+}
+#[derive(Default)]
+struct QuitLifecycle {
+    phase: QuitPhase,
+    request: u64,
+}
+#[derive(Serialize)]
+pub struct QuitStatus {
+    phase: QuitPhase,
+    request: u64,
+    worker: Option<WorkerMode>,
+    error: Option<String>,
+}
+impl QuitLifecycle {
+    fn status(&self, snapshot: &Snapshot) -> QuitStatus {
+        QuitStatus {
+            phase: self.phase,
+            request: self.request,
+            worker: snapshot.control.worker,
+            error: snapshot.control.error.clone(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -123,6 +158,7 @@ pub struct JobSummary {
     pub destination: Option<String>,
     pub error: Option<String>,
     pub active: bool,
+    pub archived: bool,
 }
 #[derive(Serialize, Deserialize)]
 struct JobMetadata {
@@ -141,6 +177,7 @@ impl Desktop {
                 data,
                 snapshot: Mutex::new(snapshot),
                 pause: AtomicBool::new(false),
+                quit: Mutex::new(QuitLifecycle::default()),
             }),
         })
     }
@@ -183,6 +220,91 @@ impl Desktop {
         rows.sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms).then(b.id.cmp(&a.id)));
         Ok(rows)
     }
+    pub fn set_job_archived(&self, job_id: String, archived: bool) -> Result<()> {
+        let cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err(
+                "Wait for the current operation to finish before archiving or restoring a job."
+                    .into(),
+            );
+        }
+        existing_database(&self.inner.data, &job_id)?;
+        atomic_write(
+            &self
+                .inner
+                .data
+                .join("jobs")
+                .join(format!("{job_id}.archive.json")),
+            &serde_json::to_vec(&archived).map_err(err)?,
+        )
+    }
+    /// Delete only this job's local records. Never traverse source or destination paths.
+    pub fn delete_job(&self, job_id: String) -> Result<Value> {
+        let mut cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err("Wait for the current operation to finish before deleting a job.".into());
+        }
+        let database = existing_database(&self.inner.data, &job_id)?;
+        let jobs = self.inner.data.join("jobs");
+        let archive = jobs.join(format!("{job_id}.archive.json"));
+        if read_json::<bool>(&archive)? != Some(true) {
+            return Err("Archive the job before deleting it permanently.".into());
+        }
+        let companions: Vec<_> = [
+            "sqlite-journal",
+            "sqlite-wal",
+            "sqlite-shm",
+            "json",
+            "sqlite.lock",
+        ]
+        .iter()
+        .map(|suffix| jobs.join(format!("{job_id}.{suffix}")))
+        .collect();
+        // Validate every existing record before removing any of them.
+        for path in &companions {
+            match fs::symlink_metadata(path) {
+                Ok(meta) if meta.is_file() && meta.nlink() == 1 => {}
+                Ok(_) => {
+                    return Err("Job records must be regular files without link aliases.".into());
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(err(e)),
+            }
+        }
+        let lock_path = jobs.join(format!("{job_id}.sqlite.lock"));
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(err)?;
+        fs2::FileExt::try_lock_exclusive(&lock).map_err(|_| {
+            "This job is in use by another process. Close it before deleting.".to_string()
+        })?;
+        if cached.control.job_id.as_deref() == Some(&job_id) {
+            match fs::remove_file(self.inner.data.join("current-job")) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(err(e)),
+            }
+            *cached = empty_snapshot();
+        }
+        for path in companions.iter().filter(|path| **path != lock_path) {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(err(e)),
+            }
+        }
+        fs::remove_file(database).map_err(err)?;
+        fs::remove_file(lock_path).map_err(err)?;
+        fs::remove_file(archive).map_err(err)?;
+        fs::File::open(jobs)
+            .and_then(|dir| dir.sync_all())
+            .map_err(err)?;
+        cached.payload()
+    }
     pub fn open_job(&self, job_id: String) -> Result<Value> {
         let mut cached = self.inner.snapshot.lock().map_err(err)?;
         if cached.control.worker.is_some() {
@@ -208,10 +330,21 @@ impl Desktop {
             );
         }
         validate_setup_size(&setup)?;
+        if setup.name.trim().is_empty() && setup.sources.is_empty() && setup.destination.is_empty()
+        {
+            return remove_draft(&self.inner.data);
+        }
         atomic_write(
             &self.inner.data.join("new-job-draft.json"),
             &serde_json::to_vec(&setup).map_err(err)?,
         )
+    }
+    pub fn clear_draft(&self) -> Result<()> {
+        let cached = self.inner.snapshot.lock().map_err(err)?;
+        if cached.control.worker.is_some() {
+            return Err("Wait for the current operation to finish before cancelling setup.".into());
+        }
+        remove_draft(&self.inner.data)
     }
     pub fn draft(&self) -> Result<Option<JobSetup>> {
         let _gate = self.inner.snapshot.lock().map_err(err)?;
@@ -326,7 +459,79 @@ impl Desktop {
         }
         snapshot.payload()
     }
+    // If state access itself is broken, do not trap the user in an unquittable
+    // process. This is an interrupted exit, not an acknowledged saved pause.
+    #[cfg(any(feature = "desktop", test))]
+    fn native_quit_allowed(&self) -> bool {
+        self.request_quit().unwrap_or(true)
+    }
+    /// Native close and Cmd-Q share one request; repeat requests never force exit.
+    pub fn request_quit(&self) -> Result<bool> {
+        let mut quit = self.inner.quit.lock().map_err(err)?;
+        let snapshot = self.inner.snapshot.lock().map_err(err)?;
+        if quit.phase == QuitPhase::Idle {
+            if snapshot.control.worker.is_none() {
+                quit.phase = QuitPhase::Exiting;
+            } else {
+                quit.request += 1;
+                quit.phase = QuitPhase::Confirming;
+            }
+        }
+        Ok(quit.phase == QuitPhase::Exiting)
+    }
+    pub fn quit_status(&self) -> Result<QuitStatus> {
+        let quit = self.inner.quit.lock().map_err(err)?;
+        let snapshot = self.inner.snapshot.lock().map_err(err)?;
+        Ok(quit.status(&snapshot))
+    }
+    pub fn confirm_quit(&self, request: u64) -> Result<QuitStatus> {
+        let mut quit = self.inner.quit.lock().map_err(err)?;
+        let mut snapshot = self.inner.snapshot.lock().map_err(err)?;
+        if quit.request == request && quit.phase == QuitPhase::Confirming {
+            quit.phase = if snapshot.control.worker.is_none() && snapshot.control.error.is_some() {
+                QuitPhase::Failed
+            } else {
+                QuitPhase::Waiting
+            };
+            if snapshot.control.worker.is_some() {
+                self.inner.pause.store(true, Ordering::Release);
+                snapshot.control.pause_requested = true;
+            }
+        }
+        Ok(quit.status(&snapshot))
+    }
+    pub fn cancel_quit(&self, request: u64) -> Result<QuitStatus> {
+        let mut quit = self.inner.quit.lock().map_err(err)?;
+        let snapshot = self.inner.snapshot.lock().map_err(err)?;
+        if quit.request == request && quit.phase != QuitPhase::Exiting {
+            quit.phase = QuitPhase::Idle;
+            // Leave a requested pause in place: the worker may already be saving it.
+        }
+        Ok(quit.status(&snapshot))
+    }
+    /// Commit to exit only for this request, after the worker dropped its Job.
+    /// A cancellation processed first makes a delayed UI acknowledgement harmless.
+    pub fn finish_quit(&self, request: u64) -> Result<bool> {
+        let mut quit = self.inner.quit.lock().map_err(err)?;
+        let snapshot = self.inner.snapshot.lock().map_err(err)?;
+        if quit.request != request || quit.phase != QuitPhase::Waiting {
+            return Ok(false);
+        }
+        if snapshot.control.worker.is_some() {
+            return Ok(false);
+        }
+        if snapshot.control.error.is_some() {
+            quit.phase = QuitPhase::Failed;
+            return Ok(false);
+        }
+        quit.phase = QuitPhase::Exiting;
+        Ok(true)
+    }
     fn launch(&self, work: Work) -> Result<Value> {
+        let quit = self.inner.quit.lock().map_err(err)?;
+        if quit.phase != QuitPhase::Idle {
+            return Err("Keep the app open before starting another operation.".into());
+        }
         let mut snapshot = self.inner.snapshot.lock().map_err(err)?;
         if snapshot.control.worker.is_some() {
             return Err(
@@ -602,6 +807,15 @@ fn save_pointer(data: &Path, id: &str) -> Result<()> {
     valid_id(id)?;
     atomic_write(&data.join("current-job"), id.as_bytes())
 }
+fn remove_draft(data: &Path) -> Result<()> {
+    match fs::remove_file(data.join("new-job-draft.json")) {
+        Ok(()) => fs::File::open(data)
+            .and_then(|dir| dir.sync_all())
+            .map_err(err),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(err(e)),
+    }
+}
 fn metadata_path(data: &Path, id: &str) -> PathBuf {
     data.join("jobs").join(format!("{id}.json"))
 }
@@ -754,7 +968,12 @@ fn job_summary(data: &Path, id: &str, active: bool) -> JobSummary {
         destination: None,
         error: None,
         active,
+        archived: false,
     };
+    match read_json::<bool>(&data.join("jobs").join(format!("{id}.archive.json"))) {
+        Ok(value) => row.archived = value.unwrap_or(false),
+        Err(message) => row.error = Some(format!("Archive status could not be read: {message}")),
+    }
     match read_json::<JobMetadata>(&metadata_path(data, id)) {
         Ok(Some(metadata)) => {
             row.name = metadata.setup.name;
@@ -980,6 +1199,24 @@ mod shell {
             .map_err(err)?
     }
     #[tauri::command]
+    async fn desktop_set_job_archived(
+        app: tauri::State<'_, Desktop>,
+        job_id: String,
+        archived: bool,
+    ) -> Result<()> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.set_job_archived(job_id, archived))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_delete_job(app: tauri::State<'_, Desktop>, job_id: String) -> Result<Value> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.delete_job(job_id))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
     async fn desktop_open_job(app: tauri::State<'_, Desktop>, job_id: String) -> Result<Value> {
         let app = app.inner().clone();
         tauri::async_runtime::spawn_blocking(move || app.open_job(job_id))
@@ -997,6 +1234,13 @@ mod shell {
     async fn desktop_save_draft(app: tauri::State<'_, Desktop>, setup: JobSetup) -> Result<()> {
         let app = app.inner().clone();
         tauri::async_runtime::spawn_blocking(move || app.save_draft(setup))
+            .await
+            .map_err(err)?
+    }
+    #[tauri::command]
+    async fn desktop_clear_draft(app: tauri::State<'_, Desktop>) -> Result<()> {
+        let app = app.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || app.clear_draft())
             .await
             .map_err(err)?
     }
@@ -1076,6 +1320,36 @@ mod shell {
             .map_err(err)?;
         Ok(())
     }
+    #[tauri::command]
+    async fn desktop_quit_status(app: tauri::State<'_, Desktop>) -> Result<QuitStatus> {
+        app.quit_status()
+    }
+    #[tauri::command]
+    async fn desktop_confirm_quit(
+        app: tauri::State<'_, Desktop>,
+        request: u64,
+    ) -> Result<QuitStatus> {
+        app.confirm_quit(request)
+    }
+    #[tauri::command]
+    async fn desktop_cancel_quit(
+        app: tauri::State<'_, Desktop>,
+        request: u64,
+    ) -> Result<QuitStatus> {
+        app.cancel_quit(request)
+    }
+    #[tauri::command]
+    async fn desktop_finish_quit(
+        app: tauri::State<'_, Desktop>,
+        handle: tauri::AppHandle,
+        request: u64,
+    ) -> Result<bool> {
+        let exiting = app.finish_quit(request)?;
+        if exiting {
+            handle.exit(0);
+        }
+        Ok(exiting)
+    }
     pub fn run() {
         tauri::Builder::default()
             .plugin(tauri_plugin_dialog::init())
@@ -1085,11 +1359,18 @@ mod shell {
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
+                desktop_quit_status,
+                desktop_confirm_quit,
+                desktop_cancel_quit,
+                desktop_finish_quit,
                 desktop_bootstrap,
                 desktop_jobs,
+                desktop_set_job_archived,
+                desktop_delete_job,
                 desktop_open_job,
                 desktop_create_job,
                 desktop_save_draft,
+                desktop_clear_draft,
                 desktop_draft,
                 desktop_snapshot,
                 desktop_start,
@@ -1101,9 +1382,29 @@ mod shell {
                 desktop_execute,
                 desktop_open_destination
             ])
-            .run(tauri::generate_context!())
-            .expect("Folderloom desktop could not start");
+            .build(tauri::generate_context!())
+            .expect("Folderloom desktop could not start")
+            .run(|app, event| match event {
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::CloseRequested { api, .. },
+                    ..
+                } => {
+                    api.prevent_close();
+                    if app.state::<Desktop>().native_quit_allowed() {
+                        app.exit(0);
+                    }
+                }
+                tauri::RunEvent::ExitRequested { api, .. }
+                    if !app.state::<Desktop>().native_quit_allowed() =>
+                {
+                    api.prevent_exit();
+                }
+                _ => {}
+            });
     }
 }
 #[cfg(feature = "desktop")]
 pub use shell::run;
+
+#[cfg(test)]
+mod quit_tests;

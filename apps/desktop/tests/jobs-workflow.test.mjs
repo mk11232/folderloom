@@ -23,13 +23,13 @@ const summary = { id: "a", name: "Family collection", created_ms: 1000, updated_
 
 test("home table exposes saved jobs and distinguishes inventory from copied results", () => {
   const html = renderToStaticMarkup(createElement(JobsHome, { jobs: [summary, { ...summary, id: "b", name: "Finished archive", stage: "results" }], loading: false, busy: false, workingJob: null, error: null, hasDraft: true, onNew() {}, onDraft() {}, onOpen() {}, onRefresh() {} }));
-  for (const text of ["Saved jobs", "Family collection", "Inventory ready", "Copy results ready", "Continue setup", "New job", "Open Family collection", "/synthetic/Primary"]) assert.ok(html.includes(text), text);
+  for (const text of ["Saved jobs", "Family collection", "Inventory ready", "Copy results ready", "Continue setup", "Discard setup", "New job", "Open job Family collection", "/synthetic/Primary"]) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /Sign in|Log in|Scan selected folders/);
 });
 
 test("sources step offers explicit removal from a saved setup without deleting files", () => {
   const html = renderToStaticMarkup(createElement(JobWizard, { initial: setup, busy: false, onCancel() {}, onStart: async () => true }));
-  for (const text of ["Job name", "Family collection", "Remove source Laptop", "Remove source Backup", "never deletes a folder or its files", "Next: destination", "Setup saved locally"]) assert.ok(html.includes(text), text);
+  for (const text of ["Job name", "Family collection", "Remove source Laptop", "Remove source Backup", "never deletes a folder or its files", "Next: destination", "Setup saved locally", "Cancel setup", "Save &amp; close"]) assert.ok(html.includes(text), text);
   assert.doesNotMatch(html, /Copy approved additions/);
 });
 
@@ -85,6 +85,32 @@ test("comparison pauses and stale plans cannot look like completed copying", () 
 test("home allows returning to a worker while preventing switching to another job", () => {
   const html = renderToStaticMarkup(createElement(JobsHome, { jobs: [{ ...summary, active: true }, { ...summary, id: "b", name: "Other job" }], loading: false, busy: false, workingJob: "a", error: null, hasDraft: false, onNew() {}, onDraft() {}, onOpen() {}, onRefresh() {} }));
   assert.match(html, /Return to working job/);
-  assert.match(html, /aria-label="Open Other job" disabled=""/);
-  assert.doesNotMatch(html, /aria-label="Open Family collection" disabled=""/);
+  assert.match(html, /aria-label="Open job Other job"[^>]* disabled=""/);
+  assert.doesNotMatch(html, /aria-label="Open job Family collection"[^>]* disabled=""/);
+});
+
+test("home hides archived jobs by default and offers archive navigation", () => {
+  const html = renderToStaticMarkup(createElement(JobsHome, { jobs: [summary, { ...summary, id: "b", name: "Retired collection", archived: true }], loading: false, busy: false, workingJob: null, error: null, hasDraft: false }));
+  assert.match(html, /Archive Family collection/);
+  assert.match(html, /Archived \(1\)/);
+  assert.doesNotMatch(html, /Retired collection/);
+});
+
+test("cancelling setup waits for pending saves before discarding it", async () => {
+  let persisted = null;
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const writer = createDraftWriter(async value => { await held; persisted = value; });
+  const saving = writer.save(setup);
+  const cancelling = writer.discard(async () => { persisted = null; });
+  release(); await saving; await cancelling;
+  assert.equal(persisted, null);
+});
+
+test("a failed setup save does not prevent cancellation", async () => {
+  let removed = false;
+  const writer = createDraftWriter(async () => { throw new Error("cannot save"); });
+  await assert.rejects(writer.save(setup));
+  await writer.discard(async () => { removed = true; });
+  assert.equal(removed, true);
 });
