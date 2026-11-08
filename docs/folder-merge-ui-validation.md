@@ -17,3 +17,11 @@ Limits: native visual checks used the existing window size, not a full resize ma
 Combine is the default presentation; alternate arrangements use a disclosure and selector. The repeated workspace brand, large destination panel, metric blocks and stacked search labels were compacted. Full destination paths remain available through Full path.
 
 35 frontend tests and macOS production build passed. Native sample job changed from separate to combine with all three sources selected; saved revision 2 contained 219 planned items and reopened in the rebuilt app. Visually confirmed initial review shows destination tree rows at the existing window size. No copying performed.
+
+## File-location outcomes (2026-11-08)
+
+Default plan preview now lists files with relative destination paths, inclusion controls, sources, and copy outcomes visible. Saved plan hashes identify matching contents across distinct output paths and differing contents under the same source filename. Up to five example locations are shown per relationship. This is comparison of saved plan evidence, not a fresh scan or automatic cross-path deduplication. The optional folder view retains folder-only inclusion semantics.
+
+38 frontend tests passed, including photos/photo1.jpg and photos/photos/photo1.jpg sharing a hash while photos/ph/photo1.jpg has different contents. The test asserts three destination locations remain. Production native build passed. Installed demo reopened revision 2 and displayed same-name/different-content outcomes and inclusion without opening details. No copying executed.
+
+User review rejected stacked file blocks. Final default view is a data table: Include, File/destination location, Sources, Content match, What happens. Named source roots are visible, and same/different relationships link to numbered rows. Native installed screenshot confirmed compact rows; 38 tests pass. No copy-engine changes or source writes.

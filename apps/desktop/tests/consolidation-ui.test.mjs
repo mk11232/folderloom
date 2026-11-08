@@ -30,7 +30,7 @@ test("review displays exact source and output paths, actions, and revision-speci
   const html = render({ snapshot: { ...snapshot, plan } });
   assert.match(html, /\/synthetic\/Family\/report-1.pdf/);
   assert.match(html, /\/synthetic\/Primary\/Documents\/report-1.pdf/);
-  for (const text of ["Copy addition", "Already present", "Create folder", "Needs review", "Approve revision 4", "Source changed; rebuild the plan."]) assert.ok(html.includes(text), text);
+  for (const text of ["Copy to this location", "Already here — no copy", "Needs review", "Approve revision 4", "Source changed; rebuild the plan."]) assert.ok(html.includes(text), text);
   assert.match(html, /Planned additions have not yet been copied/);
   assert.match(html, /Resolve the flagged mappings or exclude blocked items before approval/);
   assert.doesNotMatch(html, /Copy approved additions/);
@@ -80,7 +80,7 @@ test("inventory gaps and changed generations explain why a plan cannot proceed",
 test("started plans preserve decisions and explain rebuilding", () => {
   const html = render({ snapshot: { ...snapshot, plan: { ...plan, state: "paused", approved_revision: 4, items: [item(1, "copy")] } } });
   assert.match(html, /This plan has already started/);
-  assert.match(html, /aria-label="Include \/synthetic\/Family\/report-1.pdf" disabled=""/);
+  assert.match(html, /aria-label="Include \/synthetic\/Family\/report-1.pdf"[^>]*disabled=""/);
 });
 
 
@@ -115,12 +115,12 @@ test("folder arrangement offers concrete output choices and keeps custom mapping
   assert.doesNotMatch(html, /Source folder for mapping/);
 });
 
-test("saved review uses destination folders instead of a source-destination table", () => {
+test("saved review defaults to a file outcome table with visible inclusion", () => {
   const html = render({ snapshot: { ...snapshot, plan } });
   assert.match(html, /Destination preview/);
-  assert.match(html, /class="preview-folder" open=""/);
-  assert.match(html, /Exact destination/);
-  assert.match(html, /Include this item in the copy/);
-  assert.doesNotMatch(html, /<table/);
+  assert.match(html, /class="file-outcomes-table/);
+  assert.match(html, /Paths are inside the destination/);
+  assert.match(html, /type="checkbox" aria-label="Include/);
+  assert.match(html, /<table/);
   assert.match(html, /Needs attention \(1\)/);
 });
