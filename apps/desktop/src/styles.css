@@ -316,3 +316,15 @@ main{min-width:0;display:flex;flex-direction:column;overflow:hidden}.toolbar{dis
 .file-outcomes-table button { display: inline; padding: 0; border: 0; background: transparent; color: #086c68; font-size: inherit; text-decoration: underline; min-height: 0; }
 .file-number { color: #637366; font-size: 10px; white-space: nowrap; }
 .file-error { display: block; color: #8a571c; }
+
+.preview-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 14px; }
+.preview-toolbar .preview-view, .preview-toolbar .preview-controls { padding: 0; }
+.preview-toolbar .preview-controls { flex: 1; }
+.comparison-context { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 14px; background: #edf5ee; font-size: 12px; }
+.comparison-context strong { overflow-wrap: anywhere; }
+.comparison-context button { flex-shrink: 0; font-size: 12px; }
+.file-outcomes-table tr.comparison-anchor { background: #edf5ee; }
+.file-outcomes-table td:nth-child(4) button { display: block; margin-top: 3px; }
+.preview-toolbar + .preview-root { padding-top: 4px; }
+
+.file-outcomes-table td, .file-outcomes-table th { white-space: normal; text-overflow: clip; }
