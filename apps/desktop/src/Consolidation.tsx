@@ -152,7 +152,7 @@ export function Consolidation({ snapshot, sources, onDestinationChange, busy, st
       {!decisionsEditable && step === "plan" && <div className="draft-notice">This plan has already started. Build a new plan to change included items or destination mappings. Its saved results remain available.</div>}
       {dirty && <div className="draft-notice">Destination or mappings have changed. Build a new plan before approving or copying. This preview still shows the saved plan for <strong>{plan.destination}</strong>.</div>}
       <PlanSummary plan={plan} results={step === "results"} />
-      <PlanPreview plan={plan} results={step === "results"} locked={locked} editable={!needsRebuild && Boolean(decisionsEditable)} sourcePath={sourcePath} onReveal={onReveal} onDecision={(item, included) => void act(() => api.decide(plan.revision, [{ item_id: item.id, included }]))} />
+      <PlanPreview key={plan.id} plan={plan} results={step === "results"} locked={locked} editable={!needsRebuild && Boolean(decisionsEditable)} sourcePath={sourcePath} onReveal={onReveal} onDecision={(item, included) => void act(() => api.decide(plan.revision, [{ item_id: item.id, included }]))} />
       {step === "plan" ? <div className="plan-consent">
         {includedBlocked && <p className="inline-error">Resolve the flagged mappings or exclude blocked items before approval.</p>}
         {!approved && <label><input type="checkbox" checked={consent} disabled={locked || needsRebuild || !decisionsEditable || includedBlocked || !selectedItems.length} onChange={event => setConsent(event.target.checked)} /><span>I reviewed revision {plan.revision} and its exact destination paths. Approve the included additions for copying; retain source files.</span></label>}
