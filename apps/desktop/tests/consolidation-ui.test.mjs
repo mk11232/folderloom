@@ -115,12 +115,12 @@ test("folder arrangement offers concrete output choices and keeps custom mapping
   assert.doesNotMatch(html, /Source folder for mapping/);
 });
 
-test("saved review uses destination folders instead of a source-destination table", () => {
+test("saved review defaults to a file outcome table with visible inclusion", () => {
   const html = render({ snapshot: { ...snapshot, plan } });
   assert.match(html, /Destination preview/);
-  assert.match(html, /class="file-outcome/);
-  assert.match(html, /Paths below are inside the destination/);
+  assert.match(html, /class="file-outcomes-table/);
+  assert.match(html, /Paths are inside the destination/);
   assert.match(html, /type="checkbox" aria-label="Include/);
-  assert.doesNotMatch(html, /<table/);
+  assert.match(html, /<table/);
   assert.match(html, /Needs attention \(1\)/);
 });

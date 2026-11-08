@@ -17,9 +17,10 @@ test("same contents across different paths stay separate; same name does not imp
 test("photo outcomes and inclusion are visible without opening details",()=>{
  const html=renderToStaticMarkup(createElement(PlanPreview,{plan:{id:1,items,destination:"/output"},results:false,locked:false,editable:true,sourcePath:(_,p)=>`/source/${p}`,onReveal(){},onDecision(){}}));
  for(const path of paths) assert.ok(html.includes(path));
- assert.match(html,/Same contents elsewhere/);
- assert.match(html,/Same name, different contents/);
- assert.match(html,/separate locations retained/);
+ assert.match(html,/Same:/);
+ assert.match(html,/Different:/);
+ assert.match(html,/different paths stay separate/);
+ assert.match(html,/<table/);
  assert.equal((html.match(/Copy to this location/g)||[]).length,3);
  assert.equal((html.match(/type="checkbox"/g)||[]).length,3);
  assert.doesNotMatch(html,/<details/);
