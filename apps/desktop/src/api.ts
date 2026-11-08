@@ -19,8 +19,18 @@ export type Snapshot = {
   failures: { root_id: number; relative_path: string; message: string; generation: number }[];
   root_failures: { root_id: number; generation: number; message: string; stale: boolean }[];
 };
+export type QuitStatus = {
+  phase: "idle" | "confirming" | "waiting" | "failed" | "exiting";
+  request: number;
+  worker: Snapshot["worker"];
+  error: string | null;
+};
 export type Bootstrap = { manifest: { title: string; description: string; roots: Source[] }; manifest_path: string; configuration_error: string | null; snapshot: Snapshot };
 export const api = {
+  quitStatus: () => invoke<QuitStatus>("desktop_quit_status"),
+  confirmQuit: (request: number) => invoke<QuitStatus>("desktop_confirm_quit", { request }),
+  cancelQuit: (request: number) => invoke<QuitStatus>("desktop_cancel_quit", { request }),
+  finishQuit: (request: number) => invoke<boolean>("desktop_finish_quit", { request }),
   clearDraft: () => invoke<void>("desktop_clear_draft"),
   deleteJob: (jobId: string) => invoke<Snapshot>("desktop_delete_job", { jobId }),
   setJobArchived: (jobId: string, archived: boolean) => invoke<void>("desktop_set_job_archived", { jobId, archived }),

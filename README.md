@@ -33,6 +33,8 @@ Copy 2
 
 Every placement remains visible even when contents match. Partial samples screen candidates; only completed full hashes are shown as full-hash evidence. A match does not authorize deletion. Equal contents at different planned output paths retain both placements.
 
+Closing the window or choosing **Quit** during a job offers **Pause and quit** or **Keep working**. Folderloom waits for the worker to stop and save before exiting. While waiting, **Keep app open** cancels the quit; the requested pause still finishes. Copying currently pauses after the current file, and planning waits for the complete plan to save. Large files or unavailable drives can delay this. See [quit behavior and validation](docs/quit-validation.md).
+
 **Pause** saves a checkpoint. Resume the scan or comparison when ready. The app starts at the saved-job table; opening a job reloads its durable state. **Re-scan** checks the saved sources again, refreshes the inventory, and invalidates old comparison evidence. Run **Compare contents** again for fresh evidence. **Recover / Resume** handles a saved job that needs SQLite recovery.
 
 ## Local files, local database
