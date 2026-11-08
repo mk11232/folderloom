@@ -7,14 +7,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 // Render the actual workspace with synthetic persisted data; native actions are
 // not invoked here. Host workflow tests cover native I/O and durable decisions.
-const source = await readFile(new URL("../src/Consolidation.tsx", import.meta.url), "utf8");
-let compiled = ts.transpileModule(source, { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-compiled = compiled.replace(/from "([^"]+)"/g, (_, name) => {
-  if (name === "./api") return 'from "data:text/javascript,export const api = {}"';
-  if (name === "@tauri-apps/plugin-dialog") return 'from "data:text/javascript,export const open = () => Promise.resolve(null)"';
-  return `from ${JSON.stringify(import.meta.resolve(name))}`;
-});
-const { Consolidation, PlanSummary, excludePrimaryMappings, pathsOverlap } = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+const { componentUrl } = await import("./load-component.mjs");
+const { Consolidation, PlanSummary, excludePrimaryMappings, pathsOverlap } = await import(await componentUrl("Consolidation"));
 const roots = [{ id: 1, path: "/synthetic/Family", input_path: "/synthetic/Family" }, { id: 2, path: "/synthetic/Backup", input_path: "/synthetic/Backup" }];
 const snapshot = { job_id: "synthetic", worker: null, roots, entries: roots.map(root => ({ key: `root-${root.id}`, parent_key: null, root_id: root.id, relative_path: "", entry_type: "directory", stale: false, excluded: false })), inventory_progress: { state: "complete", generation: 1 }, plan: null };
 const item = (id, action, status = "pending", included = true) => ({ id, root_id: 1, source_key: "root-1", source_relative: `report-${id}.pdf`, destination_relative: `Documents/report-${id}.pdf`, action, status, included, detail: null, contributors: [], hash: null });
@@ -24,11 +18,11 @@ const render = (changes = {}) => renderToStaticMarkup(createElement(Consolidatio
 
 test("new mapping candidates are unselected and cannot silently start a copy", () => {
   const html = render();
-  assert.match(html, /Include folder mapping 1/);
-  assert.match(html, /Include folder mapping 2/);
-  assert.doesNotMatch(html, /checked=""/);
-  assert.match(html, /0 folder mappings selected/);
-  assert.match(html, /<button class="primary" disabled=""[^>]*>[\s\S]*?Build merge plan/);
+  assert.match(html, /Include folder Family/);
+  assert.match(html, /Include folder Backup/);
+  assert.doesNotMatch(html, /type="checkbox"[^>]*checked=""/);
+  assert.match(html, /0 folders selected/);
+  assert.match(html, /<button class="primary" disabled=""[^>]*>[\s\S]*?Preview combined folder/);
   assert.doesNotMatch(html, /Copy approved additions/);
 });
 
@@ -90,8 +84,8 @@ test("started plans preserve decisions and explain rebuilding", () => {
 });
 
 
-test("primary destination is visible on Inventory with both existing-folder choices", () => {
-  const html = render({ step: "inventory" });
+test("destination controls are available during arrangement and hidden on the scan overview", () => {
+  const html = render({ step: "plan" });
   const card = html.slice(html.indexOf("primary-workspace-card"), html.indexOf("class=\"consolidation\""));
   assert.match(card, /aria-label="Primary destination"/);
   assert.doesNotMatch(card, /hidden=/);
@@ -101,7 +95,7 @@ test("primary destination is visible on Inventory with both existing-folder choi
   assert.match(card, /value="\/synthetic\/Family"/);
   assert.match(card, /value="\/synthetic\/Backup"/);
   assert.match(card, /Existing primary contents stay in place/);
-  assert.match(html, /class="consolidation"[^>]*hidden=""/);
+  assert.match(render({ step: "inventory" }), /aria-label="Primary destination" hidden=""/);
 });
 
 test("primary selection excludes overlapping incoming mappings without confusing sibling paths", () => {
@@ -112,4 +106,21 @@ test("primary selection excludes overlapping incoming mappings without confusing
   assert.deepEqual(excludePrimaryMappings(incoming, entries, sourceRoots, "/synthetic/Family/Archive/Primary").map(mapping => mapping.selected), [false, false, true]);
   assert.equal(pathsOverlap("/synthetic/folder\\name", "/synthetic/folder"), false);
   assert.equal(incoming[0].selected, true, "exclusion must not mutate the previous draft");
+});
+
+
+test("folder arrangement offers concrete output choices and keeps custom mappings secondary", () => {
+  const html = render();
+  for (const text of ["Combine contents", "Keep each folder separate", "Combine example", "Separate example", "Folders to include", "ARRANGEMENT PREVIEW", "Preview combined folder"]) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /Source folder for mapping/);
+});
+
+test("saved review uses destination folders instead of a source-destination table", () => {
+  const html = render({ snapshot: { ...snapshot, plan } });
+  assert.match(html, /Your combined folder/);
+  assert.match(html, /class="preview-folder" open=""/);
+  assert.match(html, /Exact destination/);
+  assert.match(html, /Include this item in the copy/);
+  assert.doesNotMatch(html, /<table/);
+  assert.match(html, /Needs attention \(1\)/);
 });
